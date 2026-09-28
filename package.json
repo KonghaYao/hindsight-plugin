@@ -1,6 +1,6 @@
 {
   "name": "@peri-code/hindsight",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Long-term memory for Claude Code: recalls relevant context before each prompt, retains conversations afterwards, and exposes knowledge tools over MCP.",
   "license": "MIT",
   "type": "module",

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.9.0]
+
+### Added
+
+- **A per-workspace configuration layer.** `HINDSIGHT_CONFIG` names a JSON file
+  whose keys are the settings above, and it sits on top of every other layer: it
+  overrides the built-in defaults, both `settings.json` files and every
+  `HINDSIGHT_*` environment variable. It exists for platforms that manage a
+  workspace's configuration on the user's behalf — the file is written per
+  workspace and the variable points at it — and it borrows upstream Hindsight's
+  own variable name rather than inventing a second convention such a platform
+  would have to learn. The variable holds an **absolute** path, because
+  `loadConfig()` runs at module top level, before any cwd is known: a path needs
+  no cwd, so a hook and the MCP server of one host, inheriting one environment,
+  read the same file. A value that is not an absolute path is treated as unset
+  rather than resolved against the process's working directory, which is not the
+  workspace — skipping the layer beats reading an arbitrary file. A missing or
+  unreadable file, invalid JSON and a top level that is not an object are
+  likewise ignored and the layers below stand; a `null` value means "unset" and
+  overrides nothing.
+- The `managed` block such a file carries — `writer`, `workspaceRoot`,
+  `writtenAt` — is metadata about the file rather than a setting, and is dropped
+  at the merge. `PluginConfig` has an index signature, so without that it would
+  spread into everything downstream that reads arbitrary keys.
+
 ## [0.8.0]
 
 ### Added

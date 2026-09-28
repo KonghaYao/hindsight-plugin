@@ -25,10 +25,18 @@ export interface EnvSandbox {
   pluginData: string;
   /** Convenience path to `<pluginData>/state`. */
   stateDir: string;
+  /** Absolute path of the per-workspace config read through `HINDSIGHT_CONFIG`. */
+  workspaceConfigPath: string;
   /** Write `settings.json` into the sandboxed plugin root. */
   writePluginSettings(settings: Record<string, unknown>): void;
   /** Write the user config into the sandboxed home (`~/.hindsight/claude-code.json`). */
   writeUserConfig(config: Record<string, unknown>): void;
+  /**
+   * Write the per-workspace config and return its absolute path. The caller
+   * points `HINDSIGHT_CONFIG` at the result; nothing else reads this file, so
+   * writing it alone changes no layer.
+   */
+  writeWorkspaceConfig(config: Record<string, unknown>): string;
   /** Set an env var for the duration of the test. */
   setEnv(key: string, value: string): void;
   /** Restore every touched env var and delete the sandbox directory. */
@@ -79,6 +87,7 @@ export function createEnvSandbox(): EnvSandbox {
     pluginRoot,
     pluginData,
     stateDir: join(pluginData, 'state'),
+    workspaceConfigPath: join(root, 'workspace.json'),
 
     writePluginSettings(settings: Record<string, unknown>): void {
       writeFileSync(join(pluginRoot, 'settings.json'), JSON.stringify(settings));
@@ -88,6 +97,12 @@ export function createEnvSandbox(): EnvSandbox {
       const dir = join(homeDir, '.hindsight');
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'claude-code.json'), JSON.stringify(config));
+    },
+
+    writeWorkspaceConfig(config: Record<string, unknown>): string {
+      const path = join(root, 'workspace.json');
+      writeFileSync(path, JSON.stringify(config));
+      return path;
     },
 
     setEnv(key: string, value: string): void {

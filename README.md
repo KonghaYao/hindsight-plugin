@@ -156,7 +156,7 @@ Everything under `src/` is bundled by `scripts/build.ts` into a single
 | `src/cli.ts` | Argument parsing and subcommand dispatch |
 | `src/hooks/names.ts` | The hook names the CLI accepts, and the Claude Code event each belongs to |
 | `src/lib/client.ts` | Hindsight REST API client (`fetch`) |
-| `src/lib/config.ts` | Configuration loader (settings.json + env overrides) |
+| `src/lib/config.ts` | Configuration loader (settings.json + env overrides + the `HINDSIGHT_CONFIG` workspace file) |
 | `src/lib/daemon.ts` | `hindsight-embed` daemon lifecycle (start/stop/health) |
 | `src/lib/bank.ts` | Bank ID derivation + mission management |
 | `src/lib/content.ts` | Content processing (transcript parsing, memory formatting, tag stripping) |
@@ -230,6 +230,7 @@ All settings live in `~/.hindsight/claude-code.json`. Every setting can also be 
 2. Plugin `settings.json` (ships with the plugin, at `CLAUDE_PLUGIN_ROOT/settings.json`)
 3. User config (`~/.hindsight/claude-code.json` — recommended for your overrides)
 4. Environment variables
+5. Workspace config — the file named by `HINDSIGHT_CONFIG`
 
 Whether layer 2 applies depends on how the CLI was launched. Started from a
 source checkout, from the plugin directory, or with `CLAUDE_PLUGIN_ROOT` pointing
@@ -237,8 +238,22 @@ at it — Claude Code sets that variable for the MCP server it launches, and whe
 it does so for the hooks it spawns is not something this package can observe —
 `settings.json` is found beside the plugin; resolved by `npx` out of its cache, it
 is not. The built-in defaults and that file hold identical values, asserted by a
-test rather than assumed, so whichever of the two applies, the only layer that
-changes anything is your own config.
+test rather than assumed, so whichever of the two applies, only your own config —
+or a workspace file (layer 5) — can change anything.
+
+Layer 5 exists for platforms that manage a workspace's settings on the user's
+behalf. `HINDSIGHT_CONFIG` holds the **absolute path** of a flat JSON file whose
+keys are the setting names above — the same variable upstream Hindsight uses to
+relocate its own config file, so a platform that already speaks Hindsight needs no
+second convention. It is the topmost layer: it overrides the defaults, both
+settings files and every `HINDSIGHT_*` variable. A value that is not an absolute
+path, a file that is missing or unreadable, contents that are not valid JSON, and
+a top level that is not an object: each is ignored and the layers below stand — a
+relative path would resolve against the process's own working directory, which is
+not the workspace, so the layer is skipped rather than read from somewhere
+unpredictable. A `null` value means "unset" and overrides nothing. The `managed`
+block such a file carries (`writer`, `workspaceRoot`, `writtenAt`) is metadata
+about the file, not a setting, and is never applied.
 
 ---
 
@@ -491,7 +506,7 @@ not propagated fails CI rather than publishing a plugin that installs nothing.
 
 ```bash
 # after bumping both manifests and the two npx pins
-git tag v0.8.0 && git push origin v0.8.0
+git tag v0.9.0 && git push origin v0.9.0
 ```
 
 `.github/workflows/publish.yml` then verifies, packages and publishes to npm.

@@ -6,6 +6,7 @@
  * of the Openclaw plugin.
  */
 import { readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { pluginSettingsPath, userConfigPath } from './paths';
 
 /** Every setting the plugin understands. Unknown keys from settings files are preserved but untyped. */
@@ -183,6 +184,29 @@ type EnvType = 'string' | 'bool' | 'int' | 'list' | 'dict';
 const TRUE_VALUES = new Set(['true', '1', 'yes']);
 
 /**
+ * Env var naming the per-workspace configuration file, as an absolute path.
+ *
+ * Deliberately the upstream Hindsight variable rather than a name of our own:
+ * upstream it relocates the one configuration file, so a platform that already
+ * speaks Hindsight points this CLI at a workspace file through the same variable
+ * it points Hindsight itself at.
+ */
+const WORKSPACE_CONFIG_ENV = 'HINDSIGHT_CONFIG';
+
+/**
+ * Keys the workspace file carries as metadata rather than as settings.
+ *
+ * Whoever writes the file records `managed` (`writer` / `workspaceRoot` /
+ * `writtenAt`) beside the settings it manages. Dropping it at the merge is what
+ * keeps a non-setting out of everything downstream that reads arbitrary keys —
+ * `PluginConfig` has an index signature, so it would otherwise spread.
+ */
+const WORKSPACE_CONFIG_METADATA_KEYS: ReadonlySet<string> = new Set(['managed']);
+
+/** For settings files that carry settings only. */
+const NO_IGNORED_KEYS: ReadonlySet<string> = new Set();
+
+/**
  * Cast an environment variable string to the target type.
  * Returns null when the value cannot be represented, which skips the override
  * (mirrors the Python `_cast_env` contract).
@@ -235,8 +259,19 @@ function tryParseJson(value: string): unknown {
   }
 }
 
-/** Merge a settings.json file into the config in place. Missing files are ignored. */
-function loadSettingsFile(path: string, config: PluginConfig): void {
+/**
+ * Merge a settings.json-shaped file into the config in place. Missing files are
+ * ignored, as are unreadable ones, invalid JSON and a top level that is not an
+ * object — the caller is a hook, and a config file it cannot use must not take
+ * the hook down with it.
+ *
+ * `ignoredKeys` drops keys the file uses for something other than configuration.
+ */
+function loadSettingsFile(
+  path: string,
+  config: PluginConfig,
+  ignoredKeys: ReadonlySet<string> = NO_IGNORED_KEYS,
+): void {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
@@ -250,6 +285,9 @@ function loadSettingsFile(path: string, config: PluginConfig): void {
       return;
     }
     for (const [key, value] of Object.entries(parsed)) {
+      if (ignoredKeys.has(key)) {
+        continue;
+      }
       // Null means "unset" — never let it clobber a default.
       if (value !== null && value !== undefined) {
         config[key] = value;
@@ -261,6 +299,39 @@ function loadSettingsFile(path: string, config: PluginConfig): void {
 }
 
 /**
+ * Overlay the workspace configuration named by `HINDSIGHT_CONFIG`.
+ *
+ * This is the topmost layer: a file a platform wrote for one workspace is meant
+ * to describe that workspace, so it wins over the built-in defaults, both
+ * settings files and every `HINDSIGHT_*` override.
+ *
+ * The variable holds an absolute path rather than a workspace root because
+ * `loadConfig()` is called at module top level (see `mcp/server.ts`), before any
+ * cwd is known — the hook's cwd arrives in its stdin payload and the MCP
+ * server's in `HINDSIGHT_MCP_PROJECT_CWD`, both too late to locate config. A path
+ * needs no cwd, so a hook and the MCP server of one host, inheriting one
+ * environment, read the same file.
+ *
+ * Every failure to read it degrades to "layer absent": an unset or empty
+ * variable, a relative path, a missing or unreadable file, invalid JSON or a
+ * non-object top level all leave the other layers exactly as they were.
+ */
+function loadWorkspaceConfig(config: PluginConfig): void {
+  const path = process.env[WORKSPACE_CONFIG_ENV];
+  if (path === undefined || path.trim() === '') {
+    return;
+  }
+  // The contract is an absolute path. A relative one would be resolved against
+  // the process cwd, which for a hook or the MCP server is not the workspace —
+  // the file read would be an arbitrary one, so skipping the layer beats
+  // guessing which workspace was meant.
+  if (!isAbsolute(path)) {
+    return;
+  }
+  loadSettingsFile(path, config, WORKSPACE_CONFIG_METADATA_KEYS);
+}
+
+/**
  * Load plugin configuration from settings.json plus env overrides.
  *
  * Loading order (later entries win):
@@ -268,6 +339,7 @@ function loadSettingsFile(path: string, config: PluginConfig): void {
  *   2. Plugin settings.json      (CLAUDE_PLUGIN_ROOT/settings.json)
  *   3. User config               (~/.hindsight/claude-code.json)
  *   4. Environment variable overrides
+ *   5. Workspace config          (the file at HINDSIGHT_CONFIG, if set)
  */
 export function loadConfig(): PluginConfig {
   const config: PluginConfig = { ...DEFAULTS };
@@ -285,6 +357,8 @@ export function loadConfig(): PluginConfig {
       config[key] = cast;
     }
   }
+
+  loadWorkspaceConfig(config);
 
   return config;
 }
