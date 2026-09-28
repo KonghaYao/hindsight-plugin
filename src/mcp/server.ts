@@ -46,6 +46,21 @@ function textResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
+/**
+ * Wrap a failure so the MCP client can tell it apart from a success.
+ *
+ * `textResult` leaves `isError` unset, which reads as "the call worked" — the
+ * model only finds out otherwise by parsing the JSON itself, and a programmatic
+ * client cannot tell at all. The payload stays the same `{"error": ...}` object
+ * the Python original returned through FastMCP; only the protocol-level signal
+ * is added. Tools that hit an API failure (e.g. get_page on a missing page)
+ * already surface an error this way, so this is what makes the tool surface
+ * consistent.
+ */
+function errorResult(text: string): CallToolResult {
+  return { content: [{ type: 'text', text }], isError: true };
+}
+
 /** Python's `str(e)` — the message alone, without the `Error: ` prefix. */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -190,7 +205,7 @@ function registerTools(client: HindsightClient, defaultBankId: string): void {
         body.source_query = sourceQuery;
       }
       if (Object.keys(body).length === 0) {
-        return textResult(JSON.stringify({ error: 'Provide name or source_query to update' }));
+        return errorResult(JSON.stringify({ error: 'Provide name or source_query to update' }));
       }
       const resp = await client.request(
         'PATCH',
@@ -232,12 +247,19 @@ function registerTools(client: HindsightClient, defaultBankId: string): void {
       },
     },
     async ({ query, max_tokens: maxTokens }) => {
+      // The same knob the auto-recall hook reads, so `recallTypes` governs every
+      // recall the plugin performs instead of only half of them. An empty list
+      // means "no filter", matching the hook's `stringListOrNull` semantics.
+      const recallTypes =
+        Array.isArray(config.recallTypes) && config.recallTypes.length > 0
+          ? config.recallTypes
+          : null;
       const resp = await client.recall(
         defaultBankId,
         query,
         maxTokens,
         'mid',
-        null,
+        recallTypes,
         null,
         null,
         null,
@@ -272,12 +294,12 @@ function registerTools(client: HindsightClient, defaultBankId: string): void {
     },
     async ({ file_path: filePath }) => {
       if (!isFile(filePath)) {
-        return textResult(JSON.stringify({ error: `File not found: ${filePath}` }));
+        return errorResult(JSON.stringify({ error: `File not found: ${filePath}` }));
       }
 
       const content = readFileSync(filePath, 'utf8');
       if (content.trim() === '') {
-        return textResult(JSON.stringify({ error: `File is empty: ${filePath}` }));
+        return errorResult(JSON.stringify({ error: `File is empty: ${filePath}` }));
       }
 
       const docId = stripLastExtension(filePath).toLowerCase().replaceAll(' ', '-');

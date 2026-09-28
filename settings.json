@@ -9,7 +9,7 @@
   "recallBudget": "mid",
   "recallMaxTokens": 1024,
   "recallMinScores": {},
-  "recallTypes": ["observation"],
+  "recallTypes": ["world", "experience", "observation"],
   "recallContextTurns": 1,
   "recallMaxQueryChars": 800,
   "recallRoles": ["user", "assistant"],

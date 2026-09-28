@@ -71,7 +71,12 @@ export const DEFAULTS: PluginConfig = {
   autoRecall: true,
   recallBudget: 'mid',
   recallMaxTokens: 1024,
-  recallTypes: ['observation'],
+  // All three fact types the API knows. Leaving out `world`/`experience` (the
+  // server's own default) hides freshly retained content until consolidation
+  // synthesises an observation — and drops it for good when it synthesises none,
+  // which it sometimes does. Naming all three also keeps the result identical to
+  // sending no filter at all, rather than depending on that undocumented default.
+  recallTypes: ['world', 'experience', 'observation'],
   recallContextTurns: 1,
   recallMaxQueryChars: 800,
   recallRoles: ['user', 'assistant'],

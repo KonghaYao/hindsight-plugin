@@ -16,7 +16,7 @@
  * network, and `CLAUDE_PLUGIN_ROOT` / `CLAUDE_PLUGIN_DATA` / `HOME` point into a
  * per-test sandbox so no test reads or writes real configuration.
  */
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -44,24 +44,32 @@ function stringEnv(): Record<string, string> {
 interface StubApi {
   url: string;
   requests: Array<{ method: string; path: string }>;
+  /** Parsed JSON request bodies, in the order the requests arrived. */
+  bodies: unknown[];
   close(): Promise<void>;
 }
 
 /** A local stand-in for the Hindsight API that records every request it receives. */
 async function startStubApi(payload: unknown): Promise<StubApi> {
   const requests: Array<{ method: string; path: string }> = [];
+  const bodies: unknown[] = [];
   const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
     request.on('end', () => {
       requests.push({ method: request.method ?? '', path: request.url ?? '' });
+      const raw = Buffer.concat(chunks).toString('utf8');
+      // Requests such as DELETE carry no body; a bare `JSON.parse('')` would throw.
+      bodies.push(raw === '' ? null : (JSON.parse(raw) as unknown));
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(payload));
     });
-    request.resume();
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     requests,
+    bodies,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -139,7 +147,7 @@ async function callToolText(
   client: Client,
   name: string,
   args: Record<string, unknown> = {},
-): Promise<{ text: string; payload: unknown }> {
+): Promise<{ text: string; payload: unknown; isError: boolean }> {
   const result = await client.callTool({ name, arguments: args });
   // The SDK types the content of a result as `unknown` (the compatibility
   // overload has no content at all), so narrow it the way a client would.
@@ -149,7 +157,7 @@ async function callToolText(
   expect(blocks).toHaveLength(1);
   expect(blocks[0]?.type).toBe('text');
   const text = blocks[0]?.text ?? '';
-  return { text, payload: JSON.parse(text) as unknown };
+  return { text, payload: JSON.parse(text) as unknown, isError: result.isError === true };
 }
 
 interface ToolSchema {
@@ -331,5 +339,84 @@ describe('MCP server tool calls', () => {
       { method: 'GET', path: '/v1/default/banks/test-bank/mental-models/page-1?detail=content' },
     ]);
     expect(payload).toEqual({ id: 'page-1', content: '# Deploys' });
+  });
+
+  it('forwards the configured recallTypes so one setting governs every recall', async () => {
+    const stub = await startStubApi({ results: [] });
+    sandbox.writePluginSettings({ bankId: 'test-bank' });
+    const { client } = await connectServer({ env: { HINDSIGHT_API_URL: stub.url }, stub });
+
+    await callToolText(client, 'agent_knowledge_recall', { query: 'anything' });
+
+    // The tool used to send `types: null` unconditionally, so `recallTypes`
+    // narrowed the auto-recall hook but not this tool.
+    expect(stub.bodies).toEqual([
+      expect.objectContaining({ types: ['world', 'experience', 'observation'] }),
+    ]);
+  });
+});
+
+describe('MCP server tool errors', () => {
+  // A failure that never reaches the API still has to be reported as a failure.
+  // Returning the payload through `textResult` alone leaves `isError` unset,
+  // which tells the client the call succeeded — tools that hit an API error
+  // (get_page on a missing page) already set it, so a caller cannot rely on
+  // either. These pin the consistent behaviour.
+  it('reports a missing file as a tool error', async () => {
+    const stub = await startStubApi({});
+    sandbox.writePluginSettings({ bankId: 'test-bank' });
+    const { client } = await connectServer({ env: { HINDSIGHT_API_URL: stub.url }, stub });
+
+    const { payload, isError } = await callToolText(client, 'agent_knowledge_ingest_file', {
+      file_path: join(sandbox.root, 'does-not-exist.txt'),
+    });
+
+    expect(isError).toBe(true);
+    expect(payload).toEqual({
+      error: `File not found: ${join(sandbox.root, 'does-not-exist.txt')}`,
+    });
+    expect(stub.requests, 'no API call for an unreadable file').toEqual([]);
+  });
+
+  it('reports an empty file as a tool error', async () => {
+    const emptyPath = join(sandbox.root, 'empty.txt');
+    writeFileSync(emptyPath, '   \n');
+    const stub = await startStubApi({});
+    sandbox.writePluginSettings({ bankId: 'test-bank' });
+    const { client } = await connectServer({ env: { HINDSIGHT_API_URL: stub.url }, stub });
+
+    const { payload, isError } = await callToolText(client, 'agent_knowledge_ingest_file', {
+      file_path: emptyPath,
+    });
+
+    expect(isError).toBe(true);
+    expect(payload).toEqual({ error: `File is empty: ${emptyPath}` });
+    expect(stub.requests, 'no API call for empty content').toEqual([]);
+  });
+
+  it('reports an update with neither field as a tool error', async () => {
+    const stub = await startStubApi({});
+    sandbox.writePluginSettings({ bankId: 'test-bank' });
+    const { client } = await connectServer({ env: { HINDSIGHT_API_URL: stub.url }, stub });
+
+    const { payload, isError } = await callToolText(client, 'agent_knowledge_update_page', {
+      page_id: 'page-1',
+    });
+
+    expect(isError).toBe(true);
+    expect(payload).toEqual({ error: 'Provide name or source_query to update' });
+    expect(stub.requests, 'no API call without an update').toEqual([]);
+  });
+
+  it('still reports a successful call as a success', async () => {
+    const stub = await startStubApi({ id: 'page-1', content: '# Deploys' });
+    sandbox.writePluginSettings({ bankId: 'test-bank' });
+    const { client } = await connectServer({ env: { HINDSIGHT_API_URL: stub.url }, stub });
+
+    const { isError } = await callToolText(client, 'agent_knowledge_get_page', {
+      page_id: 'page-1',
+    });
+
+    expect(isError).toBe(false);
   });
 });

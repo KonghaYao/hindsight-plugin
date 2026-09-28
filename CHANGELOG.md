@@ -35,6 +35,32 @@
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
 
+### Fixed
+
+- **Recall no longer misses most of what was retained.** `recallTypes` defaulted
+  to `["observation"]` alone, excluding `world` and `experience` — the two types
+  the API returns when no filter is sent, and the only ones that exist right
+  after a retain. Measured against a live server, a retain followed by a recall
+  returned 0 of the 3 stored memories until consolidation synthesised
+  observations (17–62s in practice), and on one run consolidation completed
+  having produced none at all, leaving that content unreachable through
+  auto-recall for good. The default is now all three types, which returns the
+  same set as sending no filter. Set `recallTypes` explicitly to narrow it.
+- `agent_knowledge_recall` now honours `recallTypes` instead of always sending
+  no filter, so one setting governs every recall the plugin performs and the
+  auto-recall hook can no longer be narrowed without the MCP tool following.
+  With the new default this changes nothing; it only bites when `recallTypes` is
+  set.
+- `agent_knowledge_ingest_file` and `agent_knowledge_update_page` returned
+  failures ("file not found", "file is empty", "provide name or source_query")
+  as ordinary tool results with no `isError`, so an MCP client could not tell
+  the call had failed — while other tools such as `agent_knowledge_get_page`
+  already reported failures as tool errors. Both now set `isError`; the JSON
+  payload is unchanged.
+- `bun run verify` ran the tests before the build, but `mcp-server.test.ts`
+  spawns `dist/mcp/server.js` and throws when it is absent, so the script failed
+  on a clean checkout. It now builds first, matching CI.
+
 ## [0.1.0] - 2025-03-23
 
 ### Added

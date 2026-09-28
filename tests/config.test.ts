@@ -63,6 +63,14 @@ describe('LoadConfig', () => {
     expect(cfg.retainEveryNTurns).toBe(10);
   });
 
+  it('recall covers every fact type by default', () => {
+    // The default was `['observation']` alone. The API knows three fact types,
+    // and an observation only exists once consolidation has synthesised one —
+    // which it sometimes never does. Asking for all three is also what the API
+    // returns when no filter is sent at all.
+    expect(loadConfig().recallTypes).toEqual(['world', 'experience', 'observation']);
+  });
+
   it('settings json overrides defaults', () => {
     sandbox.writePluginSettings({ recallBudget: 'high', bankId: 'my-bank' });
     const cfg = loadConfig();

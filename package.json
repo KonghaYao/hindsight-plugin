@@ -16,7 +16,7 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "bun run typecheck && bun run lint && bun run test && bun run build"
+    "verify": "bun run typecheck && bun run lint && bun run build && bun run test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
