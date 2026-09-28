@@ -5,8 +5,6 @@
  * settings.json automatically. Run this script once after installing the plugin:
  *
  *     node dist/setup/setup-hooks.js
- *
- * Or via the /hindsight:setup skill inside a Claude Code session.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';

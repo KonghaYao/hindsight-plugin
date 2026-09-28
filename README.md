@@ -46,7 +46,7 @@ That's it! The plugin will automatically start capturing and recalling memories.
 - **Auto-recall** — on every user prompt, queries Hindsight for relevant memories and injects them as context (invisible to the chat transcript, visible to Claude)
 - **Auto-retain** — after every response (or every N turns), extracts and retains conversation content to Hindsight for long-term storage
 - **Knowledge tools** — MCP server exposing `agent_knowledge_*` tools for managing knowledge pages (list, get, create, update, delete), searching memories, and ingesting documents
-- **Subagents with memory** — create specialized subagents with long-term memory via the `/hindsight-memory:create-agent` skill
+- **Subagents with memory** — any subagent that declares the `hindsight` MCP server in its frontmatter gains the knowledge tools and builds memory across sessions
 - **Daemon management** — can auto-start/stop `hindsight-embed` locally or connect to an external Hindsight server
 - **Dynamic bank IDs** — supports per-agent, per-project, or per-session memory isolation
 - **Channel-agnostic** — works with Claude Code Channels (Telegram, Discord, Slack) or interactive sessions
@@ -58,15 +58,10 @@ Create specialized subagents that learn and build knowledge across sessions.
 
 ### Creating an agent
 
-Just tell Claude:
-
-> "Create a code review agent using /hindsight-memory:create-agent"
-
-Claude will:
-1. Ask for the agent name and description
-2. Write the subagent file to `~/.claude/agents/`
-3. Ingest any seed content you provide
-4. Create initial knowledge pages
+Write a subagent file to `~/.claude/agents/<name>.md` and list `hindsight` under
+`mcpServers` in its frontmatter. That is the whole wiring step — it gives the
+agent the `agent_knowledge_*` tools described below, so the agent can load its
+knowledge pages at startup and retain what it learns as it works.
 
 The agent appears in `/agents` and Claude auto-delegates to it based on its description, or you can mention `@agent-name` directly.
 
@@ -99,7 +94,6 @@ The plugin uses Claude Code hook events and an MCP server:
 | `dist/hooks/retain.js` | `Stop` hook (async) | **Auto-retain** — extract transcript, POST to Hindsight |
 | `dist/hooks/session-end.js` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
 | `dist/mcp/server.js` | MCP stdio server | **Knowledge tools** — `agent_knowledge_*` tools for pages, recall, ingest |
-| `create-agent` | Skill | **Agent creation** — `/hindsight-memory:create-agent` wizard |
 
 `hooks/hooks.json` and `.mcp.json` do not point at `dist/` directly. They invoke
 two small committed launchers — `scripts/run-hook.mjs <name>` and
