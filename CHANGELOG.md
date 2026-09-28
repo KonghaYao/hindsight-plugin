@@ -40,7 +40,7 @@
 ### Changed
 
 - **The plugin now drives the CLI through `npx`.** `hooks/hooks.json` and
-  `.mcp.json` invoke `npx -y -p @peri-code/hindsight@<version> hindsight …`
+  `.mcp.json` invoke `npx -y -p npm:@peri-code/hindsight@<version> hindsight …`
   instead of `node "${CLAUDE_PLUGIN_ROOT}/dist/…"`, and the two committed
   launchers (`scripts/run-hook.mjs`, `scripts/run-mcp.mjs`) are gone along with
   the build-the-checkout step they existed to diagnose. The version is pinned in
@@ -122,6 +122,18 @@
   packed tarball drops from 557 kB to 174 kB. The first entry above has described
   the tarball as `dist/cli.js` plus docs since it was written — the file list now
   matches it.
+- **The plugin's hooks now work inside this repository.** `hooks.json` and
+  `.mcp.json` pinned the plain spec `@peri-code/hindsight@<version>`, and `npm
+  exec` matches a `<name>@<version>` spec against the local tree before it looks
+  at the registry. In this repository the local tree *is* that package, with no
+  `bin` links, so npm installed nothing into its npx cache and ran a `hindsight`
+  that was not on `PATH`: `sh: hindsight: command not found`, exit 127, which
+  Claude Code reports as a hook error on session start and on every prompt — no
+  recall, no retain, for anyone working on the plugin. Both files now pin
+  `npm:@peri-code/hindsight@<version>`. An aliased spec is not the name npm
+  matches against the tree, so it always resolves from the registry. Reproduced
+  on npm 10.9.2 and 11.19.1. This is a plugin-manifest change: the npm package is
+  unchanged, so no new version was published for it.
 
 ### Removed
 

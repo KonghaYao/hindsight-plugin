@@ -127,12 +127,21 @@ subcommands of the same CLI, which the plugin reaches through `npx`:
 
 `plugin/hooks/hooks.json` and `plugin/.mcp.json` are the only places those
 commands are wired up, and both pin an exact version — `npx -y -p
-@peri-code/hindsight@<version> hindsight …`. Pinning is deliberate: an unpinned
-spec resolves `latest` on every invocation, so a later publish would change what
-an installed plugin runs without anyone reinstalling anything. A test asserts
-that both files, `package.json` and `plugin/.claude-plugin/plugin.json` all agree
-on the version, because the failure mode is a plugin that advertises a release
-that does not exist.
+npm:@peri-code/hindsight@<version> hindsight …`. Pinning is deliberate: an
+unpinned spec resolves `latest` on every invocation, so a later publish would
+change what an installed plugin runs without anyone reinstalling anything. A test
+asserts that both files, `package.json` and `plugin/.claude-plugin/plugin.json`
+all agree on the version, because the failure mode is a plugin that advertises a
+release that does not exist.
+
+The `npm:` in front of the name is an alias spec, and it is load-bearing. `npm
+exec` matches a `<name>@<version>` spec against the local tree before it looks at
+the registry; where that match has no `bin` links — which is exactly the case
+when the project you are in *is* this package, as in this repository — npm
+installs nothing into its npx cache and puts no `hindsight` on `PATH`, so the
+hook dies with `sh: hindsight: command not found`. An aliased spec is not the
+name npm matches against the tree, so it resolves from the registry wherever it
+runs. Reproduced on npm 10.9.2 and 11.19.1.
 
 There is no build step on the plugin side. `dist/` is a build artifact of the
 *npm package* and is not committed; the plugin never reads it.
@@ -386,10 +395,10 @@ And enable dynamic bank IDs:
 
 ### Hooks fail with "command not found"
 
-The plugin runs `npx -y -p @peri-code/hindsight@<version> …`, so `npx` must be on
-the `PATH` of whatever process Claude Code was started from. GUI launches
-(especially on macOS) often inherit a `PATH` that omits a version manager's
-shims. Run `npx --version` in the same environment to confirm.
+The plugin runs `npx -y -p npm:@peri-code/hindsight@<version> …`, so `npx`
+must be on the `PATH` of whatever process Claude Code was started from. GUI
+launches (especially on macOS) often inherit a `PATH` that omits a version
+manager's shims. Run `npx --version` in the same environment to confirm.
 
 If the machine has no network access the first time a hook runs, `npx` cannot
 download the pinned release and that hook fails: nothing is recalled or retained
@@ -452,14 +461,14 @@ bun run build
 node dist/cli.js hook recall < hook-input.json
 node dist/cli.js --help
 
-# Or exercise the npx path the plugin actually uses. Pack in the repository, run
-# anywhere else: `npm exec` matches a `<name>@<version>` spec against the local
-# tree first, and this repository's package.json carries exactly the name and
-# version the plugin pins — so from the repo root that command resolves to the
-# working tree and links no `bin` at all, failing with `command not found` rather
-# than proving anything.
+# Or exercise the npx path the plugin actually uses, against the change you just
+# built. The tarball, not the registry spec: an unaliased `<name>@<version>` spec
+# is matched against the local tree first, and this repository's package.json
+# carries exactly the name and version the plugin pins — so from here that spec
+# resolves to the working tree, links no `bin`, and fails with `command not found`
+# rather than proving anything. This is why `hooks.json` and `.mcp.json` pin the
+# package behind an `npm:` alias instead.
 npm pack --pack-destination /tmp
-cd "$(mktemp -d)"
 npx -y -p /tmp/peri-code-hindsight-*.tgz hindsight --version
 ```
 

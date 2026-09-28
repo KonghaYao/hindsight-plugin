@@ -41,8 +41,23 @@ const marketplaceJson = readJson('.claude-plugin/marketplace.json');
 
 const hooks = hooksJson.hooks as Record<string, unknown>;
 
+/**
+ * The package spec both manifests must pin, behind an `npm:` alias.
+ *
+ * The alias is load-bearing, not cosmetic. `npm exec` matches a
+ * `<name>@<version>` spec against the local tree before it looks at the registry,
+ * and when that match carries no `bin` links — which is exactly the case when the
+ * current project *is* this package, i.e. in this repository — npm installs
+ * nothing into its npx cache and puts no `hindsight` on `PATH`. The hook then dies
+ * with `sh: hindsight: command not found` (exit 127), which Claude Code reports as
+ * a hook error on session start and on every prompt. An aliased spec is not the
+ * name npm matches against the tree, so it always resolves from the registry.
+ * Reproduced on npm 10.9.2 and 11.19.1.
+ */
+const NPX_ALIAS = `npm:${String(pkg.name)}@${String(pkg.version)}`;
+
 /** The command prefix every hook in `hooks.json` must share. */
-const NPX_PREFIX = `npx -y -p ${String(pkg.name)}@${String(pkg.version)} hindsight`;
+const NPX_PREFIX = `npx -y -p ${NPX_ALIAS} hindsight`;
 
 /** Pull the `{type, command}` entries registered for one Claude Code event. */
 function registrationsFor(event: string): HookRegistration[] {
@@ -83,11 +98,12 @@ describe('version consistency', () => {
 
   it('pins the MCP server registration to that same version', () => {
     // Unpinned, `npx` resolves `latest` on every session start, so a later
-    // publish would silently change what this plugin runs.
+    // publish would silently change what this plugin runs. Aliased for the same
+    // reason as the hooks: the server has to start in this repository too.
     const servers = mcpJson.mcpServers as Record<string, { command?: string; args?: string[] }>;
 
     expect(servers.hindsight?.command).toBe('npx');
-    expect(servers.hindsight?.args?.[2]).toBe(`${String(pkg.name)}@${String(pkg.version)}`);
+    expect(servers.hindsight?.args?.[2]).toBe(NPX_ALIAS);
   });
 });
 

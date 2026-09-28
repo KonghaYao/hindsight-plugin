@@ -2,7 +2,7 @@
   "mcpServers": {
     "hindsight": {
       "command": "npx",
-      "args": ["-y", "-p", "@peri-code/hindsight@0.8.0", "hindsight", "mcp"]
+      "args": ["-y", "-p", "npm:@peri-code/hindsight@0.8.0", "hindsight", "mcp"]
     }
   }
 }
