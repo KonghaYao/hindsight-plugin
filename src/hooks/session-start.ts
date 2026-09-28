@@ -7,28 +7,13 @@
  *
  * This is the Claude Code equivalent of Openclaw's service.start() —
  * verify the server is reachable early, before the first prompt.
+ *
+ * Not a program: `src/cli.ts` imports this module and calls `run()`, so there is
+ * no entry guard here.
  */
-import { basename } from 'node:path';
 import { debugLog, loadConfig } from '../lib/config';
 import { getApiUrl, prestartDaemonBackground } from '../lib/daemon';
 import { upgradeNotice } from '../lib/upgrade-notice';
-
-/** The hook script Claude Code executes — see the entry guard below. */
-const ENTRY_FILE = /^session-start\.[cm]?[jt]s$/;
-
-/**
- * Stand-in for Python's `if __name__ == "__main__":` guard.
- *
- * ESM has no main-module concept, and `import.meta.url` cannot stand in for one:
- * the bundler inlines every module a hook imports into its own single file, so
- * `import.meta.url` collapses to the output file's path inside *all* of them.
- * The entry script's own name is the one signal that survives bundling — and it
- * is also what keeps importing this module from a sibling hook or a test from
- * executing the hook as a side effect.
- */
-function isEntryModule(): boolean {
-  return ENTRY_FILE.test(basename(process.argv[1] ?? ''));
-}
 
 /** Message text of an error, matching Python's `str(e)` rather than JS's `String(error)`. */
 function errorText(error: unknown): string {
@@ -125,11 +110,4 @@ export async function run(): Promise<void> {
     console.error(`[Hindsight] SessionStart error: ${errorText(error)}`);
     process.exit(0);
   }
-}
-
-if (isEntryModule()) {
-  run().catch((error: unknown) => {
-    // Defence in depth — `run` already handles every throw path.
-    console.error(`[Hindsight] SessionStart error: ${errorText(error)}`);
-  });
 }

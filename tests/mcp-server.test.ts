@@ -27,8 +27,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createEnvSandbox, type EnvSandbox } from './helpers';
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-/** The build artifact `.mcp.json` reaches through `scripts/run-mcp.mjs`. */
-const SERVER_ENTRY = join(PACKAGE_ROOT, 'dist', 'mcp', 'server.js');
+/** The same build artifact `plugin/.mcp.json` reaches through `hindsight mcp`. */
+const SERVER_ENTRY = join(PACKAGE_ROOT, 'dist', 'cli.js');
+const SERVER_ARGS = [SERVER_ENTRY, 'mcp'];
 
 /** `process.env` with every `undefined` dropped — `spawn` only takes strings. */
 function stringEnv(): Record<string, string> {
@@ -118,7 +119,7 @@ async function connectServer(options: {
 }): Promise<Harness> {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [SERVER_ENTRY],
+    args: SERVER_ARGS,
     cwd: options.cwd ?? PACKAGE_ROOT,
     stderr: 'pipe',
     env: {

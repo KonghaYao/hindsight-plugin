@@ -1,21 +1,28 @@
 # Hindsight Memory Plugin for Claude Code
 
-Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context — a complete port of [`hindsight-openclaw`](../openclaw/) adapted to Claude Code's hook-based plugin architecture.
+Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
+
+Two artifacts ship from this repository:
+
+| Artifact | Where | What it is |
+|----------|-------|------------|
+| [`@peri-code/hindsight`](https://www.npmjs.com/package/@peri-code/hindsight) | npm | The CLI that does the work: the four hooks and the MCP server |
+| `hindsight-memory` | [`plugin/`](plugin) | The Claude Code plugin — a directory of JSON that calls that CLI through `npx` |
+
+The plugin ships no code of its own, so there is nothing to build after
+installing it: `npx` fetches the pinned CLI release on first use and runs it from
+its cache afterwards.
 
 ## Quick Start
 
 ```bash
-# 1. Add the Hindsight marketplace and install the plugin
+# 1. Add the marketplace and install the plugin
+#    The plugin lives in plugin/, so the marketplace entry must resolve to that
+#    subdirectory rather than to the repository root.
 claude plugin marketplace add vectorize-io/hindsight
 claude plugin install hindsight-memory
 
-# 2. Build the plugin and register its hooks
-#    dist/ is a build artifact and is NOT committed — see Development below.
-cd ~/.claude/plugins/cache/hindsight/hindsight-memory/<version>
-bun install && bun run build
-node dist/setup/setup-hooks.js
-
-# 3. Configure your LLM provider for memory extraction
+# 2. Configure your LLM provider for memory extraction
 # Option A: OpenAI (auto-detected)
 export OPENAI_API_KEY="sk-your-key"
 
@@ -30,16 +37,30 @@ export HINDSIGHT_LLM_PROVIDER=claude-code
 mkdir -p ~/.hindsight
 echo '{"hindsightApiUrl": "https://your-hindsight-server.com"}' > ~/.hindsight/claude-code.json
 
-# 4. Start Claude Code — the plugin activates automatically
+# 3. Start Claude Code — the plugin activates automatically
 claude
 ```
 
 That's it! The plugin will automatically start capturing and recalling memories.
 
-> **Requirements:** Node.js 20+ (the same runtime Claude Code uses) and
-> [Bun](https://bun.sh) to build. Skip step 2 only if your checkout already has a
-> freshly built `dist/` — an unbuilt plugin prints a build hint and stays inert
-> instead of blocking your session.
+> **Requirements:** Node.js 20+ — the same runtime Claude Code uses, and the one
+> `npx` needs. Nothing else: the CLI has no runtime dependencies, and the plugin
+> has no build step.
+
+### Using the CLI on its own
+
+The plugin is one consumer of the CLI; you can drive it directly, without Claude
+Code:
+
+```bash
+npx -y -p @peri-code/hindsight hindsight hook recall   # run a hook once
+npx -y -p @peri-code/hindsight hindsight mcp           # start the MCP server
+npx -y -p @peri-code/hindsight hindsight setup         # register hooks in ~/.claude/settings.json
+npx -y -p @peri-code/hindsight hindsight --help        # everything else
+```
+
+The `-p <spec>` form names the package explicitly; plain `npx @peri-code/hindsight …`
+works too, but is ambiguous when the argument happens to look like a path.
 
 ## Features
 
@@ -50,7 +71,8 @@ That's it! The plugin will automatically start capturing and recalling memories.
 - **Daemon management** — can auto-start/stop `hindsight-embed` locally or connect to an external Hindsight server
 - **Dynamic bank IDs** — supports per-agent, per-project, or per-session memory isolation
 - **Channel-agnostic** — works with Claude Code Channels (Telegram, Discord, Slack) or interactive sessions
-- **Zero runtime dependencies** — hooks and the MCP server are bundled into self-contained ESM files that run on plain Node.js; nothing is resolved from `node_modules` at runtime
+- **Zero runtime dependencies** — the published package is one bundled ESM file that plain Node.js runs, so `npx` needs no install step and nothing is resolved from `node_modules`
+
 
 ## Subagents with Memory
 
@@ -85,30 +107,38 @@ The bank ID is resolved automatically from the plugin config — tools never exp
 
 ## Architecture
 
-The plugin uses Claude Code hook events and an MCP server:
+The plugin registers four Claude Code hooks and one MCP server. All five are
+subcommands of the same CLI, which the plugin reaches through `npx`:
 
-| Component | Event/Transport | Purpose |
-|-----------|-----------------|---------|
-| `dist/hooks/session-start.js` | `SessionStart` hook | Health check — verify Hindsight is reachable |
-| `dist/hooks/recall.js` | `UserPromptSubmit` hook | **Auto-recall** — query memories, inject as `additionalContext` |
-| `dist/hooks/retain.js` | `Stop` hook (async) | **Auto-retain** — extract transcript, POST to Hindsight |
-| `dist/hooks/session-end.js` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
-| `dist/mcp/server.js` | MCP stdio server | **Knowledge tools** — `agent_knowledge_*` tools for pages, recall, ingest |
+| CLI subcommand | Event/Transport | Purpose |
+|----------------|-----------------|---------|
+| `hindsight hook session-start` | `SessionStart` hook | Health check — verify Hindsight is reachable |
+| `hindsight hook recall` | `UserPromptSubmit` hook | **Auto-recall** — query memories, inject as `additionalContext` |
+| `hindsight hook retain` | `Stop` hook (async) | **Auto-retain** — extract transcript, POST to Hindsight |
+| `hindsight hook session-end` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
+| `hindsight mcp` | MCP stdio server | **Knowledge tools** — `agent_knowledge_*` tools for pages, recall, ingest |
 
-`hooks/hooks.json` and `.mcp.json` do not point at `dist/` directly. They invoke
-two small committed launchers — `scripts/run-hook.mjs <name>` and
-`scripts/run-mcp.mjs` — which report an actionable "build the plugin first"
-message when `dist/` is missing, instead of a raw module-resolution error.
-(`run-mcp.mjs` also captures the session's project directory for bank
-derivation, and fails loudly: an MCP server that starts but never answers
-`initialize` would otherwise hang the client.)
+`plugin/hooks/hooks.json` and `plugin/.mcp.json` are the only places those
+commands are wired up, and both pin an exact version — `npx -y -p
+@peri-code/hindsight@<version> hindsight …`. Pinning is deliberate: an unpinned
+spec resolves `latest` on every invocation, so a later publish would change what
+an installed plugin runs without anyone reinstalling anything. A test asserts
+that both files, `package.json` and `plugin/.claude-plugin/plugin.json` all agree
+on the version, because the failure mode is a plugin that advertises a release
+that does not exist.
+
+There is no build step on the plugin side. `dist/` is a build artifact of the
+*npm package* and is not committed; the plugin never reads it.
 
 ### Source Modules
 
-Everything under `src/` is bundled by `scripts/build.ts` into `dist/`.
+Everything under `src/` is bundled by `scripts/build.ts` into a single
+`dist/cli.js`.
 
 | Module | Purpose |
 |--------|---------|
+| `src/cli.ts` | Argument parsing and subcommand dispatch |
+| `src/hooks/names.ts` | The hook names the CLI accepts, and the Claude Code event each belongs to |
 | `src/lib/client.ts` | Hindsight REST API client (`fetch`) |
 | `src/lib/config.ts` | Configuration loader (settings.json + env overrides) |
 | `src/lib/daemon.ts` | `hindsight-embed` daemon lifecycle (start/stop/health) |
@@ -116,7 +146,8 @@ Everything under `src/` is bundled by `scripts/build.ts` into `dist/`.
 | `src/lib/content.ts` | Content processing (transcript parsing, memory formatting, tag stripping) |
 | `src/lib/state.ts` | File-based state persistence with `O_EXCL` lock files |
 | `src/lib/llm.ts` | LLM provider auto-detection for daemon mode |
-| `src/lib/paths.ts` | Plugin root / manifest / config path resolution |
+| `src/lib/paths.ts` | Config directory resolution |
+| `src/lib/version.ts` | Package version, inlined at build time |
 
 ### How Recall Works
 
@@ -184,6 +215,11 @@ All settings live in `~/.hindsight/claude-code.json`. Every setting can also be 
 3. User config (`~/.hindsight/claude-code.json` — recommended for your overrides)
 4. Environment variables
 
+Layer 2 is usually absent in practice: an installed plugin runs the CLI out of
+npm's cache over `npx`, and that copy has no `settings.json` beside it. The
+built-in defaults and that file hold the same values — a test asserts it — so the
+only layer that ever changes anything is your own config.
+
 ---
 
 ### Connection & Daemon
@@ -192,7 +228,7 @@ These settings control how the plugin connects to the Hindsight API.
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `hindsightApiUrl` | `HINDSIGHT_API_URL` | `""` (empty) | URL of an external Hindsight API server. When empty, the plugin uses a local daemon instead. |
+| `hindsightApiUrl` | `HINDSIGHT_API_URL` | `null` | URL of an external Hindsight API server. When unset or empty, the plugin uses a local daemon instead. |
 | `hindsightApiToken` | `HINDSIGHT_API_TOKEN` | `null` | Authentication token for the external API. Only needed when `hindsightApiUrl` is set. |
 | `apiPort` | `HINDSIGHT_API_PORT` | `9077` | Port used by the local `hindsight-embed` daemon. Change this if you run multiple instances or have a port conflict. |
 | `embedVersion` | `HINDSIGHT_EMBED_VERSION` | `"latest"` | Which version of `hindsight-embed` to install via `uvx`. Pin to a specific version (e.g. `"0.5.2"`) for reproducibility. |
@@ -334,7 +370,19 @@ And enable dynamic bank IDs:
 ### Plugin not activating
 
 - Verify installation: check that `.claude-plugin/plugin.json` exists in the installed plugin directory
+- Check that `npx --version` works: every hook and the MCP server shell out to it
 - Check Claude Code logs for `[Hindsight]` messages (enable `"debug": true` in `~/.hindsight/claude-code.json`)
+
+### Hooks fail with "command not found"
+
+The plugin runs `npx -y -p @peri-code/hindsight@<version> …`, so `npx` must be on
+the `PATH` of whatever process Claude Code was started from. GUI launches
+(especially on macOS) often inherit a `PATH` that omits a version manager's
+shims. Run `npx --version` in the same environment to confirm.
+
+If the first run has no network access, `npx` cannot download the pinned release
+and the hook exits non-zero once; it works from then on, because the package
+stays in the npx cache.
 
 ### Recall returning no memories
 
@@ -351,10 +399,13 @@ And enable dynamic bank IDs:
 
 ### High latency on recall
 
-- The recall hook has a 12-second timeout. If Hindsight is slow:
+- The recall hook has a 45-second timeout, shared by the `UserPromptSubmit` hook
+  and `hindsight setup`. If Hindsight is slow:
   - Use `recallBudget: "low"` (fewer retrieval strategies)
   - Reduce `recallMaxTokens`
   - Consider using an external API with a faster server
+- Remember that every hook pays `npx`'s startup cost on top of the request
+  itself. It is small once the package is cached, but it is not zero.
 
 ### State file issues
 
@@ -364,26 +415,59 @@ And enable dynamic bank IDs:
 
 ## Development
 
-The plugin is TypeScript, bundled with [Bun](https://bun.sh) and run on Node.js 20+.
+The CLI is TypeScript, bundled with [Bun](https://bun.sh) and run on Node.js 20+.
+The plugin in `plugin/` is plain JSON — no build, no dependencies — so a change
+there takes effect on the next session.
 
 ```bash
 bun install        # Install tooling (Bun, TypeScript, Vitest, Biome)
-bun run build      # Bundle src/ → dist/  (required: dist/ is not committed)
+bun run build      # Bundle src/ → dist/cli.js  (required: dist/ is not committed)
 bun run typecheck  # tsc --noEmit
 bun run lint       # Biome lint + format check
 bun run test       # Vitest
 bun run verify     # All of the above, in order
 ```
 
-`scripts/build.ts` bundles each entry point into a **self-contained** file under
-`dist/` — no `node_modules` resolution at runtime, because the hooks are spawned
-as bare `node dist/hooks/*.js` processes. `bun run build` must be re-run after
-any source change; the launchers will tell you when it hasn't been.
+`scripts/build.ts` bundles every module into **one self-contained file** at
+`dist/cli.js` — no `node_modules` resolution at runtime, because npx runs that
+file directly out of its cache. The build also inlines the version from
+`package.json` and refuses to finish if the shebang went missing. `bun run build`
+must be re-run after any source change.
+
+Try a change without publishing:
+
+```bash
+bun run build
+node dist/cli.js hook recall < hook-input.json
+node dist/cli.js --help
+
+# Or exercise the npx path the plugin actually uses:
+npm pack --pack-destination /tmp
+npx -y -p /tmp/peri-code-hindsight-*.tgz hindsight mcp
+```
 
 The test suite lives in `tests/` and runs on Vitest. It was ported 1:1 from the
 plugin's original pytest suite (see the git history for the pre-migration
 sources), including the end-to-end hook tests that drive stdin/stdout and a
-mocked `fetch`.
+mocked `fetch`. `tests/cli.test.ts` and `tests/mcp-server.test.ts` run the real
+build artifact, so `bun run build` has to happen first — which is why `verify`
+builds before it tests.
+
+### Releasing
+
+`package.json` and `plugin/.claude-plugin/plugin.json` must carry the same
+version, and both `plugin/hooks/hooks.json` and `plugin/.mcp.json` must pin it.
+`tests/manifest.test.ts` enforces every one of those, so a bumped version that was
+not propagated fails CI rather than publishing a plugin that installs nothing.
+
+```bash
+# after bumping both manifests and the two npx pins
+git tag v0.8.0 && git push origin v0.8.0
+```
+
+`.github/workflows/publish.yml` then verifies, packages and publishes to npm.
+It needs an `NPM_TOKEN` repository secret with publish rights on the
+`@peri-code` scope.
 
 To test local changes to `hindsight-embed`:
 

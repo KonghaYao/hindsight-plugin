@@ -28,7 +28,12 @@ jobs:
       - run: bun run typecheck
       - run: bun run lint
 
-      # dist/ is not committed, so it must be built before the tests that
-      # exercise the bundled MCP server.
+      # dist/ is not committed. The CLI tests and the MCP server tests both
+      # spawn `dist/cli.js`, and the manifest tests compare the built version
+      # against the plugin's pins, so this has to come before the test run.
       - run: bun run build
       - run: bun run test
+
+      # What npm would actually publish, so a file that fell out of `files`
+      # fails here rather than on a user's machine.
+      - run: npm pack --dry-run

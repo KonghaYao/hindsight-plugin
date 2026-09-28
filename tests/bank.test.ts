@@ -42,7 +42,7 @@ afterEach(() => {
 
 /** Base config mirroring the Python suite's `_cfg()` helper. */
 function cfg(overrides: Partial<PluginConfig> = {}): PluginConfig {
-  return { ...DEFAULTS, bankId: 'claude-code', ...overrides };
+  return { ...DEFAULTS, ...overrides };
 }
 
 /** Hook input mirroring the Python suite's `_hook()` helper. */
@@ -83,7 +83,7 @@ function stateFileContents(name: string): Record<string, unknown> | null {
 
 describe('DeriveBankIdStatic', () => {
   it('uses the default bank in static mode', () => {
-    expect(deriveBankId(hook(), cfg())).toBe('claude-code');
+    expect(deriveBankId(hook(), cfg())).toBe('claude_code');
   });
 
   it('honours a custom bankId', () => {
@@ -95,8 +95,10 @@ describe('DeriveBankIdStatic', () => {
   });
 
   it('falls back to the default bank when bankId is null', () => {
+    // Same bank as an unset `bankId` — the fallback is the shipped default, not
+    // a constant of its own.
     expect(deriveBankId(hook(), cfg({ bankId: null, bankIdPrefix: 'dev' }))).toBe(
-      'dev-claude-code',
+      'dev-claude_code',
     );
   });
 });
@@ -364,7 +366,14 @@ describe('DirectoryBankMap', () => {
 describe('EnsureBankMission', () => {
   it('sets the mission on the first call', async () => {
     const client = fakeClient();
-    const config = cfg({ bankMission: 'You are a helpful assistant.', bankId: 'test-bank' });
+    // `retainMission` is pinned rather than inherited: the built-in default is
+    // a real retention prompt, and this case is about the mission being sent at
+    // all, not about what the retain mission happens to default to.
+    const config = cfg({
+      bankMission: 'You are a helpful assistant.',
+      retainMission: null,
+      bankId: 'test-bank',
+    });
     await ensureBankMission(client, 'test-bank', config);
     expect(client.setBankMission).toHaveBeenCalledOnce();
     expect(client.setBankMission).toHaveBeenCalledWith(

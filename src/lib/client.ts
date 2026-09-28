@@ -4,7 +4,7 @@
  * Communicates with a Hindsight server via HTTP. Mirrors the HTTP mode of the
  * Openclaw HindsightClient (client.js), adapted for Node's global fetch.
  */
-import { pluginVersion } from './paths';
+import { USER_AGENT } from './version';
 
 export const DEFAULT_TIMEOUT = 15; // seconds
 
@@ -13,8 +13,10 @@ export const DEFAULT_TIMEOUT = 15; // seconds
  * reverse proxy with UA-based bot filtering) don't block the client — the
  * Python original's stdlib default "Python-urllib/X.Y" tripped Cloudflare error
  * 1010, so the UA is always set explicitly.
+ *
+ * Re-exported from `lib/version.ts`, where the string is documented.
  */
-export const USER_AGENT = `hindsight-claude-code/${pluginVersion()}`;
+export { USER_AGENT };
 
 /** Validate and normalize the API URL. Reject non-HTTP schemes. */
 export function validateApiUrl(url: string): string {

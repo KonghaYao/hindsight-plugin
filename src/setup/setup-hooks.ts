@@ -2,14 +2,15 @@
  * Register hindsight-memory hooks into ~/.claude/settings.json.
  *
  * Claude Code's plugin installer does not currently merge hooks.json into
- * settings.json automatically. Run this script once after installing the plugin:
+ * settings.json automatically. Run this once after installing the plugin:
  *
- *     node dist/setup/setup-hooks.js
+ *     npx @peri-code/hindsight setup
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { userConfigPath } from '../lib/paths';
+import { PACKAGE_NAME, VERSION } from '../lib/version';
 
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
 
@@ -99,24 +100,26 @@ function findPluginRoot(): string {
 /**
  * Build a hook command line.
  *
- * `${CLAUDE_PLUGIN_ROOT}` is expanded by Claude Code when the hook runs, so the
- * placeholder must survive as literal text in settings.json — it is escaped
- * here rather than interpolated by JavaScript.
+ * The hooks live in the published CLI rather than in a build output inside the
+ * plugin directory, so the command names the package instead of
+ * `${CLAUDE_PLUGIN_ROOT}` — nothing here needs the plugin's own install path.
+ *
+ * `-y` skips npx's "Ok to proceed?" prompt, which a hook has no way to answer,
+ * and `-p <spec>` names the package explicitly so the command that follows is
+ * unambiguous rather than inferred from the spec. The version is pinned on
+ * purpose: an unpinned spec would let a later publish change this hook's
+ * behaviour mid-session.
  */
 function hookCommand(script: string): string {
-  return `node "\${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs" ${script}`;
+  return `npx -y -p ${PACKAGE_NAME}@${VERSION} hindsight hook ${script}`;
 }
 
 /**
  * Build the hook registrations for the installed plugin.
  *
- * The commands name `${CLAUDE_PLUGIN_ROOT}` (the variable this script also
- * exports through `settings.env`) rather than the resolved directory: the cache
- * path contains the plugin version, so an absolute path would go stale on the
- * next upgrade. The Python original ran `${plugin_root}/scripts/*.py` with
- * `python3`; the migrated hooks are bundled ESM files under `dist/hooks/`, so
- * they run via `scripts/run-hook.mjs`, which reports an actionable error when
- * the checkout has not been built yet.
+ * Mirrors the shipped `plugin/hooks/hooks.json`, except that recall's timeout is
+ * computed from the user's `requestTimeoutSeconds` instead of being fixed — see
+ * `recallTimeout`.
  */
 function buildHooks(): Record<string, unknown> {
   const recallHookTimeout = recallTimeout();
@@ -169,18 +172,25 @@ function buildHooks(): Record<string, unknown> {
   };
 }
 
-function main(): void {
+/**
+ * Merge this plugin's hooks into the user's settings file.
+ *
+ * Returns the process exit code rather than calling `process.exit()`: stdout is
+ * asynchronous when it is a pipe, and exiting mid-write can truncate the last
+ * line — which is the one telling the user to restart Claude Code.
+ */
+export async function run(): Promise<number> {
   let pluginRoot: string;
   try {
     pluginRoot = findPluginRoot();
   } catch (error) {
     console.error(`Error: ${errorMessage(error)}`);
-    process.exit(1);
+    return 1;
   }
 
   if (!isFile(SETTINGS_PATH)) {
     console.error(`Error: ${SETTINGS_PATH} not found. Is Claude Code installed?`);
-    process.exit(1);
+    return 1;
   }
 
   const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8')) as Record<string, unknown>;
@@ -201,6 +211,5 @@ function main(): void {
   console.log('hindsight-memory hooks registered successfully.');
   console.log(`Plugin root: ${pluginRoot}`);
   console.log('Restart Claude Code for changes to take effect.');
+  return 0;
 }
-
-main();

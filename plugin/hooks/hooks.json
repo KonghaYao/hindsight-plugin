@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs\" session-start",
+            "command": "npx -y -p @peri-code/hindsight@0.8.0 hindsight hook session-start",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs\" recall",
+            "command": "npx -y -p @peri-code/hindsight@0.8.0 hindsight hook recall",
             "timeout": 45
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs\" retain",
+            "command": "npx -y -p @peri-code/hindsight@0.8.0 hindsight hook retain",
             "timeout": 15,
             "async": true
           }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs\" session-end",
+            "command": "npx -y -p @peri-code/hindsight@0.8.0 hindsight hook session-end",
             "timeout": 10
           }
         ]

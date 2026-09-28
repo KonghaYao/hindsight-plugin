@@ -20,10 +20,8 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename, dirname, resolve, sep } from 'node:path';
-import type { PluginConfig } from './config';
+import { DEFAULT_BANK_ID, type PluginConfig } from './config';
 import { readState, writeState } from './state';
-
-export const DEFAULT_BANK_NAME = 'claude-code';
 
 /** Valid granularity fields for Claude Code. */
 const VALID_FIELDS = new Set(['agent', 'project', 'session', 'channel', 'user']);
@@ -156,8 +154,12 @@ export function deriveBankId(hookInput: Record<string, unknown>, config: PluginC
   }
 
   if (!config.dynamicBankId) {
-    // Static mode — single bank for everything
-    const base = config.bankId || DEFAULT_BANK_NAME;
+    // Static mode — single bank for everything.
+    //
+    // An empty `bankId` falls back to the shipped default rather than to a
+    // constant of its own: two spellings of "the default bank" is how a user who
+    // cleared the setting ends up writing to a bank nobody reads.
+    const base = config.bankId || DEFAULT_BANK_ID;
     return prefix ? `${prefix}-${base}` : base;
   }
 

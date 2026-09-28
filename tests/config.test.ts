@@ -145,8 +145,9 @@ describe('LoadConfig', () => {
   it('null values in settings json not applied', () => {
     sandbox.writePluginSettings({ bankId: null, recallBudget: 'high' });
     const cfg = loadConfig();
-    // Null values in the file should not override defaults.
-    expect(cfg.bankId).toBeNull(); // default is null, so ok
+    // Null values in the file should not override defaults — the built-in
+    // default for `bankId` is the bank the plugin has always shipped.
+    expect(cfg.bankId).toBe('claude_code');
     expect(cfg.recallBudget).toBe('high');
   });
 

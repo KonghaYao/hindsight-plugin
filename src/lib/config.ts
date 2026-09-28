@@ -65,6 +65,16 @@ export interface PluginConfig {
   [key: string]: unknown;
 }
 
+/**
+ * The bank every installation has filed its memories under since the first
+ * release — `claude_code` with an underscore, as shipped in `settings.json`.
+ *
+ * Named rather than inlined because a second spelling of "the default bank"
+ * anywhere in the code is a user-visible bug: it sends memories to a bank that
+ * nothing reads, which is indistinguishable from the memories being deleted.
+ */
+export const DEFAULT_BANK_ID = 'claude_code';
+
 /** Built-in defaults. Settings files and env vars layer on top of these. */
 export const DEFAULTS: PluginConfig = {
   // Recall
@@ -98,7 +108,11 @@ export const DEFAULTS: PluginConfig = {
   retainOverlapTurns: 2,
   retainToolCalls: false,
   retainContext: 'claude-code',
-  retainTags: [],
+  // Every retained document is tagged with the session it came from. Recall
+  // filters on tags only when the user sets `recallTags`, so this is what makes
+  // such a filter possible at all — a tag that was never written cannot be
+  // matched retroactively, and the documents are already stored by then.
+  retainTags: ['{session_id}'],
   retainMetadata: {},
   // Connection
   upgradeNotice: true, // show the superseded-by-coding-agents notice (capped, see lib/upgrade-notice.ts)
@@ -110,12 +124,21 @@ export const DEFAULTS: PluginConfig = {
   embedPackagePath: null,
   requestTimeoutSeconds: null,
   // Bank
-  bankId: null,
+  // The default lives here rather than only in `plugin/settings.json` because
+  // that file is not always findable — under npx the CLI runs from a cache
+  // directory with no plugin next to it — and a default that resolves to a
+  // different bank would look exactly like the memories having been deleted.
+  bankId: DEFAULT_BANK_ID,
   bankIdPrefix: '',
   dynamicBankId: false,
   dynamicBankGranularity: ['agent', 'project'],
-  bankMission: '',
-  retainMission: null,
+  bankMission:
+    'You are a Claude Code AI assistant. Focus on technical discussions, ' +
+    "decisions, and context relevant to the user's projects.",
+  retainMission:
+    'Extract technical decisions, architectural choices, user preferences, ' +
+    'project context, and people/tool relationships. Ignore routine greetings ' +
+    'and transient operational details.',
   agentName: 'claude-code',
   resolveWorktrees: true,
   directoryBankMap: {},

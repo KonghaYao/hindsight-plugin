@@ -1,14 +1,33 @@
 {
-  "name": "hindsight-memory",
-  "version": "0.7.5",
-  "private": true,
-  "description": "Automatic long-term memory for Claude Code via Hindsight",
+  "name": "@peri-code/hindsight",
+  "version": "0.8.0",
+  "description": "Long-term memory for Claude Code: recalls relevant context before each prompt, retains conversations afterwards, and exposes knowledge tools over MCP.",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "packageManager": "bun@1.4.2",
+  "bin": {
+    "hindsight": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "claude-code",
+    "hindsight",
+    "memory",
+    "mcp",
+    "recall",
+    "retain"
+  ],
   "scripts": {
     "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
@@ -18,15 +37,13 @@
     "test:watch": "vitest",
     "verify": "bun run typecheck && bun run lint && bun run build && bun run test"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.1",
-    "zod": "^4.6.5"
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "@types/bun": "^1.4.2",
     "@types/node": "^26.6.3",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "zod": "^4.6.5"
   }
 }

@@ -1,9 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0]
 
 ### Added
 
+- **`@peri-code/hindsight`, a standalone CLI.** The hooks, the MCP server and the
+  hook-registration step are now subcommands of one executable —
+  `hindsight hook <name>`, `hindsight mcp`, `hindsight setup` — published to npm
+  as a single self-contained ESM file with **no runtime dependencies**. The
+  packaged tarball is `dist/cli.js` plus the README, licence and changelog.
+- `plugin/` holds the Claude Code plugin: `.claude-plugin/plugin.json`,
+  `hooks/hooks.json`, `.mcp.json` and `settings.json`, and nothing else. It ships
+  no code and needs no build step, so installing it is enough to start using it.
 - `{user_id}` template variable for `retainTags` and `retainMetadata`, resolved
   from the `HINDSIGHT_USER_ID` env var (empty string if unset). Enables
   machine-independent per-user memory scoping without hardcoding user ids in
@@ -18,19 +26,43 @@
 
 ### Changed
 
+- **The plugin now drives the CLI through `npx`.** `hooks/hooks.json` and
+  `.mcp.json` invoke `npx -y -p @peri-code/hindsight@<version> hindsight …`
+  instead of `node "${CLAUDE_PLUGIN_ROOT}/dist/…"`, and the two committed
+  launchers (`scripts/run-hook.mjs`, `scripts/run-mcp.mjs`) are gone along with
+  the build-the-checkout step they existed to diagnose. The version is pinned in
+  both files rather than resolved as `latest`, so a later publish cannot change
+  what an installed plugin runs; `tests/manifest.test.ts` asserts both pins,
+  `package.json` and `plugin/.claude-plugin/plugin.json` all carry the same
+  version.
 - **Rewritten in TypeScript.** The plugin was Python; it is now a TypeScript
-  project built with Bun and run on Node.js 20+. `bun run build` bundles every
-  entry point into a self-contained ESM file under `dist/`, which is **not
-  committed** — build the checkout once after installing (see the README).
-  Behaviour is unchanged: the hooks, the MCP tool surface (`agent_knowledge_*`,
-  same nine tools and parameter names), configuration keys, state file formats
-  and on-disk layouts are identical, and the 228-case Vitest suite was ported
-  1:1 from the pytest suite. Hooks and the MCP server now run via
-  `node dist/...` instead of `python3 scripts/...`; `hooks/hooks.json` and
-  `.mcp.json` invoke the committed launchers `scripts/run-hook.mjs` and
-  `scripts/run-mcp.mjs`, which report an actionable message when the plugin has
-  not been built yet. Python is no longer required (the local daemon still uses
-  `uvx hindsight-embed`, an external tool).
+  project built with Bun and run on Node.js 20+. Behaviour is unchanged: the
+  hooks, the MCP tool surface (`agent_knowledge_*`, same nine tools and parameter
+  names), configuration keys, state file formats and on-disk layouts are
+  identical, and the Vitest suite was ported 1:1 from the pytest suite. Python is
+  no longer required (the local daemon still uses `uvx hindsight-embed`, an
+  external tool).
+- The package version is inlined at build time instead of read from
+  `.claude-plugin/plugin.json`. That manifest does not exist next to the code
+  when npx runs it from its cache, so the MCP server used to report `0.0.0` there
+  and the `User-Agent` carried it on every request. The string sent to the
+  Hindsight API is unchanged (`hindsight-claude-code/<version>`).
+- `plugin/settings.json` now lists every configuration key. Three —
+  `recallAdditionalBanks`, `requestTimeoutSeconds`, `agentName` — were settable
+  but absent from the file, which doubles as the reference for what can be
+  configured. A test fails if a key is added to one and not the other.
+- **The built-in defaults are now the values `plugin/settings.json` ships.** Under
+  npx the CLI runs from npm's cache, where no `settings.json` sits next to it, so
+  the built-ins are the entire configuration for an npx-run hook; the shipped file
+  is what a source checkout and the `CLAUDE_PLUGIN_ROOT` layout read. The two had
+  drifted: `retainTags` was `["{session_id}"]` in the file and `[]` in code, both
+  missions were set in the file and empty in code, and `bankId` was `claude_code`
+  in the file but `claude-code` in the code's fallback — so whether a memory
+  carried the tag recall filters on, and which bank it landed in, depended on
+  which copy of the defaults you got. A test now asserts the two are identical
+  rather than merely compatible.
+- An empty `bankId` resolves to the shipped default instead of to a second
+  constant with a different spelling.
 - Tags that resolve to an empty namespace content (e.g. `"user:"` when
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.

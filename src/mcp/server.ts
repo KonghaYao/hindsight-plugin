@@ -22,11 +22,11 @@ import { deriveBankId } from '../lib/bank';
 import { HindsightClient } from '../lib/client';
 import { debugLog, loadConfig } from '../lib/config';
 import { getApiUrl } from '../lib/daemon';
-import { pluginVersion } from '../lib/paths';
+import { VERSION } from '../lib/version';
 
 // ── Server setup ────────────────────────────────────────
 
-const server = new McpServer({ name: 'hindsight', version: pluginVersion() });
+const server = new McpServer({ name: 'hindsight', version: VERSION });
 
 // Resolve config at startup
 const config = loadConfig();
@@ -366,4 +366,12 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-await main();
+/**
+ * Serve stdio until the client disconnects.
+ *
+ * Called by `src/cli.ts` (`hindsight mcp`). The MCP SDK owns the process from
+ * here: it keeps stdin open and exits when the transport closes.
+ */
+export async function run(): Promise<void> {
+  await main();
+}
