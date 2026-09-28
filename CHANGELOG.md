@@ -18,6 +18,19 @@
 
 ### Changed
 
+- **Rewritten in TypeScript.** The plugin was Python; it is now a TypeScript
+  project built with Bun and run on Node.js 20+. `bun run build` bundles every
+  entry point into a self-contained ESM file under `dist/`, which is **not
+  committed** — build the checkout once after installing (see the README).
+  Behaviour is unchanged: the hooks, the MCP tool surface (`agent_knowledge_*`,
+  same nine tools and parameter names), configuration keys, state file formats
+  and on-disk layouts are identical, and the 228-case Vitest suite was ported
+  1:1 from the pytest suite. Hooks and the MCP server now run via
+  `node dist/...` instead of `python3 scripts/...`; `hooks/hooks.json` and
+  `.mcp.json` invoke the committed launchers `scripts/run-hook.mjs` and
+  `scripts/run-mcp.mjs`, which report an actionable message when the plugin has
+  not been built yet. Python is no longer required (the local daemon still uses
+  `uvx hindsight-embed`, an external tool).
 - Tags that resolve to an empty namespace content (e.g. `"user:"` when
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.

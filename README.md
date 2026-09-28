@@ -9,7 +9,13 @@ Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs
 claude plugin marketplace add vectorize-io/hindsight
 claude plugin install hindsight-memory
 
-# 2. Configure your LLM provider for memory extraction
+# 2. Build the plugin and register its hooks
+#    dist/ is a build artifact and is NOT committed — see Development below.
+cd ~/.claude/plugins/cache/hindsight/hindsight-memory/<version>
+bun install && bun run build
+node dist/setup/setup-hooks.js
+
+# 3. Configure your LLM provider for memory extraction
 # Option A: OpenAI (auto-detected)
 export OPENAI_API_KEY="sk-your-key"
 
@@ -24,11 +30,16 @@ export HINDSIGHT_LLM_PROVIDER=claude-code
 mkdir -p ~/.hindsight
 echo '{"hindsightApiUrl": "https://your-hindsight-server.com"}' > ~/.hindsight/claude-code.json
 
-# 3. Start Claude Code — the plugin activates automatically
+# 4. Start Claude Code — the plugin activates automatically
 claude
 ```
 
 That's it! The plugin will automatically start capturing and recalling memories.
+
+> **Requirements:** Node.js 20+ (the same runtime Claude Code uses) and
+> [Bun](https://bun.sh) to build. Skip step 2 only if your checkout already has a
+> freshly built `dist/` — an unbuilt plugin prints a build hint and stays inert
+> instead of blocking your session.
 
 ## Features
 
@@ -39,7 +50,7 @@ That's it! The plugin will automatically start capturing and recalling memories.
 - **Daemon management** — can auto-start/stop `hindsight-embed` locally or connect to an external Hindsight server
 - **Dynamic bank IDs** — supports per-agent, per-project, or per-session memory isolation
 - **Channel-agnostic** — works with Claude Code Channels (Telegram, Discord, Slack) or interactive sessions
-- **Zero dependencies** — hooks are pure Python stdlib; MCP server requires the `mcp` pip package
+- **Zero runtime dependencies** — hooks and the MCP server are bundled into self-contained ESM files that run on plain Node.js; nothing is resolved from `node_modules` at runtime
 
 ## Subagents with Memory
 
@@ -83,24 +94,35 @@ The plugin uses Claude Code hook events and an MCP server:
 
 | Component | Event/Transport | Purpose |
 |-----------|-----------------|---------|
-| `session_start.py` | `SessionStart` hook | Health check — verify Hindsight is reachable |
-| `recall.py` | `UserPromptSubmit` hook | **Auto-recall** — query memories, inject as `additionalContext` |
-| `retain.py` | `Stop` hook (async) | **Auto-retain** — extract transcript, POST to Hindsight |
-| `session_end.py` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
-| `mcp_server.py` | MCP stdio server | **Knowledge tools** — `agent_knowledge_*` tools for pages, recall, ingest |
+| `dist/hooks/session-start.js` | `SessionStart` hook | Health check — verify Hindsight is reachable |
+| `dist/hooks/recall.js` | `UserPromptSubmit` hook | **Auto-recall** — query memories, inject as `additionalContext` |
+| `dist/hooks/retain.js` | `Stop` hook (async) | **Auto-retain** — extract transcript, POST to Hindsight |
+| `dist/hooks/session-end.js` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
+| `dist/mcp/server.js` | MCP stdio server | **Knowledge tools** — `agent_knowledge_*` tools for pages, recall, ingest |
 | `create-agent` | Skill | **Agent creation** — `/hindsight-memory:create-agent` wizard |
 
-### Library Modules
+`hooks/hooks.json` and `.mcp.json` do not point at `dist/` directly. They invoke
+two small committed launchers — `scripts/run-hook.mjs <name>` and
+`scripts/run-mcp.mjs` — which report an actionable "build the plugin first"
+message when `dist/` is missing, instead of a raw module-resolution error.
+(`run-mcp.mjs` also captures the session's project directory for bank
+derivation, and fails loudly: an MCP server that starts but never answers
+`initialize` would otherwise hang the client.)
+
+### Source Modules
+
+Everything under `src/` is bundled by `scripts/build.ts` into `dist/`.
 
 | Module | Purpose |
 |--------|---------|
-| `lib/client.py` | Hindsight REST API client (stdlib `urllib`) |
-| `lib/config.py` | Configuration loader (settings.json + env overrides) |
-| `lib/daemon.py` | `hindsight-embed` daemon lifecycle (start/stop/health) |
-| `lib/bank.py` | Bank ID derivation + mission management |
-| `lib/content.py` | Content processing (transcript parsing, memory formatting, tag stripping) |
-| `lib/state.py` | File-based state persistence with `fcntl` locking |
-| `lib/llm.py` | LLM provider auto-detection for daemon mode |
+| `src/lib/client.ts` | Hindsight REST API client (`fetch`) |
+| `src/lib/config.ts` | Configuration loader (settings.json + env overrides) |
+| `src/lib/daemon.ts` | `hindsight-embed` daemon lifecycle (start/stop/health) |
+| `src/lib/bank.ts` | Bank ID derivation + mission management |
+| `src/lib/content.ts` | Content processing (transcript parsing, memory formatting, tag stripping) |
+| `src/lib/state.ts` | File-based state persistence with `O_EXCL` lock files |
+| `src/lib/llm.ts` | LLM provider auto-detection for daemon mode |
+| `src/lib/paths.ts` | Plugin root / manifest / config path resolution |
 
 ### How Recall Works
 
@@ -347,6 +369,27 @@ And enable dynamic bank IDs:
 - Turn counts, bank missions, and daemon state are tracked here
 
 ## Development
+
+The plugin is TypeScript, bundled with [Bun](https://bun.sh) and run on Node.js 20+.
+
+```bash
+bun install        # Install tooling (Bun, TypeScript, Vitest, Biome)
+bun run build      # Bundle src/ → dist/  (required: dist/ is not committed)
+bun run typecheck  # tsc --noEmit
+bun run lint       # Biome lint + format check
+bun run test       # Vitest
+bun run verify     # All of the above, in order
+```
+
+`scripts/build.ts` bundles each entry point into a **self-contained** file under
+`dist/` — no `node_modules` resolution at runtime, because the hooks are spawned
+as bare `node dist/hooks/*.js` processes. `bun run build` must be re-run after
+any source change; the launchers will tell you when it hasn't been.
+
+The test suite lives in `tests/` and runs on Vitest. It was ported 1:1 from the
+plugin's original pytest suite (see the git history for the pre-migration
+sources), including the end-to-end hook tests that drive stdin/stdout and a
+mocked `fetch`.
 
 To test local changes to `hindsight-embed`:
 

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+
+# Python artifacts from the pre-TypeScript implementation
+__pycache__/
+.pytest_cache/
+*.pyc
+
+.DS_Store
