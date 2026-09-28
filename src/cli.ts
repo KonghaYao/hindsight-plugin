@@ -8,7 +8,6 @@
  *
  *     hindsight hook <session-start|recall|retain|session-end>
  *     hindsight mcp
- *     hindsight setup
  *
  * Startup cost is why the subcommands are imported lazily: `hook recall` fires
  * on every user prompt, and it has no reason to parse the MCP SDK.
@@ -23,14 +22,13 @@ Long-term memory for Claude Code, backed by Hindsight.
 Commands:
   hook <name>   Run a Claude Code hook. One of: ${HOOK_NAMES.join(', ')}
   mcp           Run the MCP stdio server exposing the agent_knowledge_* tools
-  setup         Register this plugin's hooks in ~/.claude/settings.json
 
 Options:
   -h, --help     Show this help
   -V, --version  Print the version
 
-The Claude Code plugin calls this CLI through npx; you only need to run it by
-hand for the one-off setup step, or to use the knowledge tools yourself.`;
+The Claude Code plugin calls this CLI through npx; run it by hand to use the
+knowledge tools yourself, or to try a hook against saved input.`;
 
 /**
  * True for the strings this CLI accepts as a hook name.
@@ -112,11 +110,6 @@ async function main(): Promise<number> {
     const mod = await import('./mcp/server');
     await mod.run();
     return 0;
-  }
-
-  if (command === 'setup') {
-    const mod = await import('./setup/setup-hooks');
-    return await mod.run();
   }
 
   process.stderr.write(`hindsight: unknown command "${command}"\n\n${USAGE}\n`);

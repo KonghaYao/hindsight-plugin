@@ -12,7 +12,7 @@
     "hindsight": "./dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/cli.js",
     "CHANGELOG.md",
     "LICENSE",
     "README.md"

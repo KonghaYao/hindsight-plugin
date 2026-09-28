@@ -12,7 +12,7 @@
  * the shebang, the executable bit and the dependency inlining only exist there.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -83,12 +83,34 @@ describe('bin entry', () => {
   });
 
   it('resolves nothing from node_modules at runtime', () => {
-    // The package publishes `dist/` and nothing else, so any bare import left in
-    // the bundle would only fail on a user's machine, at first prompt.
-    const imports = [...readFileSync(CLI, 'utf8').matchAll(/^\s*import\s[^;]*?from\s*"([^"]+)"/gm)]
+    // The package publishes `dist/cli.js` and nothing else, so a bare specifier
+    // left in the bundle would only fail on a user's machine, at first prompt.
+    //
+    // Scanned for `require(…)` and `import(…)` as well as static `from`, because a
+    // dependency emitting one of those inside a string is invisible to a regex
+    // anchored on line-starting imports — and that is how the five specifiers
+    // below got in.
+    const source = readFileSync(CLI, 'utf8');
+    const specifiers = [
+      ...source.matchAll(/\bfrom\s*"([^"]+)"/g),
+      ...source.matchAll(/\brequire\(\s*"([^"]+)"\s*\)/g),
+      ...source.matchAll(/\bimport\(\s*"([^"]+)"\s*\)/g),
+    ]
       .map((match) => match[1] ?? '')
       .filter((specifier) => !specifier.startsWith('node:'));
-    expect(imports).toEqual([]);
+    expect([...new Set(specifiers)].sort()).toEqual([
+      // ajv's code generator writes `require` calls for its own runtime helpers
+      // into the validators it emits; they execute only if a schema is compiled at
+      // runtime, and the one such call site in the bundled SDK is elicitation form
+      // validation, which no tool here reaches (the MCP end-to-end suite covers
+      // every tool). Listed rather than tolerated so that a second dependency
+      // arriving the same way is a failing test instead of a broken session.
+      'ajv-formats/dist/formats',
+      'ajv/dist/runtime/equal',
+      'ajv/dist/runtime/ucs2length',
+      'ajv/dist/runtime/uri',
+      'ajv/dist/runtime/validation_error',
+    ]);
   });
 });
 
@@ -165,41 +187,14 @@ describe('hindsight hook <name>', () => {
   });
 });
 
-describe('hindsight setup', () => {
-  /** Create the plugin cache layout `findPluginRoot` looks for, plus a settings file. */
-  function prepareClaudeDir(version: string): string {
-    const claudeDir = join(sandbox.homeDir, '.claude');
-    const pluginDir = join(claudeDir, 'plugins', 'cache', 'hindsight', 'hindsight-memory', version);
-    mkdirSync(pluginDir, { recursive: true });
-    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({}));
-    return join(claudeDir, 'settings.json');
-  }
-
-  it('registers hooks that call the pinned published CLI', () => {
-    const settingsPath = prepareClaudeDir(VERSION);
-
-    const { status, stdout } = runCli(['setup'], { env: { HOME: sandbox.homeDir } });
-    expect(status).toBe(0);
-    expect(stdout).toContain('registered successfully');
-
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
-    };
-    const commands = Object.values(settings.hooks).flatMap((matchers) =>
-      matchers.flatMap((matcher) => matcher.hooks.map((hook) => hook.command)),
-    );
-
-    expect(commands).toContain(`npx -y -p ${PACKAGE_NAME}@${VERSION} hindsight hook recall`);
-    expect(commands).toHaveLength(HOOK_NAMES.length);
-  });
-
-  it('fails with a message when the plugin is not installed', () => {
-    const claudeDir = join(sandbox.homeDir, '.claude');
-    mkdirSync(claudeDir, { recursive: true });
-    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({}));
-
-    const { status, stderr } = runCli(['setup'], { env: { HOME: sandbox.homeDir } });
+describe('removed subcommands', () => {
+  it('rejects `setup`, which the plugin no longer needs', () => {
+    // `setup` wrote this plugin's four hooks into ~/.claude/settings.json. The
+    // plugin declares them itself in `hooks/hooks.json` — Claude Code launches the
+    // MCP server it declares, and the hooks are the same mechanism — so the only
+    // thing the command could still do is register them twice, once per source.
+    const { status, stderr } = runCli(['setup']);
     expect(status).toBe(1);
-    expect(stderr).toContain('plugin not found');
+    expect(stderr).toContain('unknown command "setup"');
   });
 });

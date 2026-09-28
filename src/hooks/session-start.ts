@@ -1,19 +1,19 @@
 /**
- * SessionStart hook: health check + session logging.
+ * SessionStart hook: health check + daemon pre-start.
  *
- * Fires once when a Claude Code session begins. Uses additionalContext
- * (supported on SessionStart) to inject an initial system note if
- * Hindsight is available.
+ * Fires once when a Claude Code session begins and verifies the server is
+ * reachable before the first prompt, so the first recall does not also pay for
+ * discovering that nothing is listening yet. Writes nothing to stdout: there is no
+ * context for it to add, and a hook that says nothing is one less thing between
+ * the user and their session.
  *
- * This is the Claude Code equivalent of Openclaw's service.start() —
- * verify the server is reachable early, before the first prompt.
+ * This is the Claude Code equivalent of Openclaw's service.start().
  *
  * Not a program: `src/cli.ts` imports this module and calls `run()`, so there is
  * no entry guard here.
  */
 import { debugLog, loadConfig } from '../lib/config';
 import { getApiUrl, prestartDaemonBackground } from '../lib/daemon';
-import { upgradeNotice } from '../lib/upgrade-notice';
 
 /** Message text of an error, matching Python's `str(e)` rather than JS's `String(error)`. */
 function errorText(error: unknown): string {
@@ -64,18 +64,6 @@ function hookField(input: Record<string, unknown>, key: string, fallback: string
 
 export async function main(): Promise<void> {
   const config = loadConfig();
-
-  // Emitted BEFORE any of the early returns below: whether memory is enabled, or the server is
-  // even reachable, has no bearing on whether this plugin has been superseded. `systemMessage` is
-  // the channel Claude Code shows to the USER (additionalContext would only reach the model).
-  const notice = upgradeNotice(config);
-  if (notice) {
-    const payload = {
-      systemMessage: notice,
-      hookSpecificOutput: { hookEventName: 'SessionStart' },
-    };
-    process.stdout.write(`${JSON.stringify(payload)}\n`);
-  }
 
   if (!config.autoRecall && !config.autoRetain) {
     debugLog(config, 'Both autoRecall and autoRetain disabled, skipping session start');

@@ -466,9 +466,12 @@ export async function run(): Promise<void> {
     await main();
   } catch (error) {
     console.error(`[Hindsight] Unexpected error in recall: ${errorText(error)}`);
-    // Exit 2 in debug mode surfaces errors to Claude; 0 degrades silently
+    // Debug mode keeps the failure visible by exiting 1 — a non-blocking error,
+    // whose stderr Claude Code shows. Never 2: that is the blocking code, and on
+    // `UserPromptSubmit` it rejects the prompt, so a bug in recall would cost the
+    // user the message they just typed.
     try {
-      process.exit(loadConfig().debug ? 2 : 0);
+      process.exit(loadConfig().debug ? 1 : 0);
     } catch {
       process.exit(0);
     }

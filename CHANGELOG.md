@@ -4,14 +4,27 @@
 
 ### Added
 
-- **`@peri-code/hindsight`, a standalone CLI.** The hooks, the MCP server and the
-  hook-registration step are now subcommands of one executable —
-  `hindsight hook <name>`, `hindsight mcp`, `hindsight setup` — published to npm
-  as a single self-contained ESM file with **no runtime dependencies**. The
-  packaged tarball is `dist/cli.js` plus the README, licence and changelog.
+- **`@peri-code/hindsight`, a standalone CLI.** The hooks and the MCP server are
+  now subcommands of one executable — `hindsight hook <name>`, `hindsight mcp` —
+  published to npm as a single self-contained ESM file with **no runtime
+  dependencies**. The packaged tarball is `dist/cli.js` plus the README, licence
+  and changelog.
 - `plugin/` holds the Claude Code plugin: `.claude-plugin/plugin.json`,
   `hooks/hooks.json`, `.mcp.json` and `settings.json`, and nothing else. It ships
   no code and needs no build step, so installing it is enough to start using it.
+- `.claude-plugin/marketplace.json`, which makes the repository installable —
+  `claude plugin marketplace add <repo>` reads that file from the root and
+  resolves the one plugin entry it lists to `plugin/`. There was no marketplace
+  manifest before, so the repository could not be added as one at all.
+- **The invocation form the plugin actually uses is now exercised, in the suite
+  and after every publish.** `tests/npx.test.ts` packs the package and runs
+  `npx -y -p <tarball> hindsight …` from a temporary directory with an npm cache of
+  its own, so the package name, the `bin` link, the executable bit and the exit
+  code are checked the way a user's machine checks them rather than through
+  `node dist/cli.js`. `publish.yml` then resolves
+  `@peri-code/hindsight@<version>` from outside the checkout and fails the release
+  if it does not: the registry is the one part of this no local test can see, and
+  a plugin pinning a version that never arrived fails on every hook with E404.
 - `{user_id}` template variable for `retainTags` and `retainMetadata`, resolved
   from the `HINDSIGHT_USER_ID` env var (empty string if unset). Enables
   machine-independent per-user memory scoping without hardcoding user ids in
@@ -51,11 +64,12 @@
   `recallAdditionalBanks`, `requestTimeoutSeconds`, `agentName` — were settable
   but absent from the file, which doubles as the reference for what can be
   configured. A test fails if a key is added to one and not the other.
-- **The built-in defaults are now the values `plugin/settings.json` ships.** Under
-  npx the CLI runs from npm's cache, where no `settings.json` sits next to it, so
-  the built-ins are the entire configuration for an npx-run hook; the shipped file
-  is what a source checkout and the `CLAUDE_PLUGIN_ROOT` layout read. The two had
-  drifted: `retainTags` was `["{session_id}"]` in the file and `[]` in code, both
+- **The built-in defaults are now the values `plugin/settings.json` ships.** Which
+  of the two a hook reads depends on how the CLI was started — `npx` resolves it
+  from a cache directory with no plugin beside it, while a source checkout and a
+  `CLAUDE_PLUGIN_ROOT` launch find the file — so the same setting could resolve two
+  ways depending on nothing the user did. The two had drifted: `retainTags` was
+  `["{session_id}"]` in the file and `[]` in code, both
   missions were set in the file and empty in code, and `bankId` was `claude_code`
   in the file but `claude-code` in the code's fallback — so whether a memory
   carried the tag recall filters on, and which bank it landed in, depended on
@@ -63,6 +77,11 @@
   rather than merely compatible.
 - An empty `bankId` resolves to the shipped default instead of to a second
   constant with a different spelling.
+- The `session-start` hook's timeout is 30s rather than 5s. The health check it
+  runs is still capped at 5s; the budget is now sized for the cold path, because
+  the first invocation of that hook is also the first `npx`, which has to download
+  and unpack the package. At 5s it was killed mid-install, handing the same
+  download to the first prompt.
 - Tags that resolve to an empty namespace content (e.g. `"user:"` when
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
@@ -89,9 +108,36 @@
   the call had failed — while other tools such as `agent_knowledge_get_page`
   already reported failures as tool errors. Both now set `isError`; the JSON
   payload is unchanged.
-- `bun run verify` ran the tests before the build, but `mcp-server.test.ts`
-  spawns `dist/mcp/server.js` and throws when it is absent, so the script failed
-  on a clean checkout. It now builds first, matching CI.
+- `bun run verify` ran the tests before the build, but the CLI and MCP suites
+  spawn `dist/cli.js` and throw when it is absent, so the script failed on a clean
+  checkout. It now builds first, matching CI.
+- `hindsight hook recall` and `hindsight hook retain` no longer exit 2 when an
+  unexpected error escapes with `debug` on. Exit 2 is Claude Code's blocking code:
+  on `UserPromptSubmit` it rejects the prompt, so the setting the README
+  recommends for troubleshooting turned any bug in the hook into the user losing
+  the message they had just typed. Debug mode still surfaces the failure — as exit
+  1, a non-blocking error whose stderr is shown.
+- The published tarball no longer carries `dist/cli.js.map`. `files` listed the
+  whole `dist/` directory, so a 2 MB source map went to every `npx` user; the
+  packed tarball drops from 557 kB to 174 kB. The first entry above has described
+  the tarball as `dist/cli.js` plus docs since it was written — the file list now
+  matches it.
+
+### Removed
+
+- **The deprecation notice printed at every session start.** It announced that the
+  plugin was superseded by the Coding Agents plugin and linked the migration guide.
+  This package is published under its own name and continues the plugin, so a
+  message at startup telling every user to move elsewhere was the opposite of what
+  the release is for. The `upgradeNotice` setting is gone with it, and
+  `hindsight hook session-start` no longer writes to stdout at all — it verifies
+  the server is reachable before the first prompt and pre-starts the local daemon.
+- **`hindsight setup`** — and `scripts/setup_hooks.py` before it. It wrote the four
+  hooks into `~/.claude/settings.json`. The plugin declares the same four in its own
+  `hooks/hooks.json`, which Claude Code reads the way it reads the plugin's
+  `.mcp.json` — the MCP server declared there is launched for an installed plugin —
+  so the command's only possible effect was to register every hook twice, once per
+  source. `hindsight setup` now exits 1 as an unknown command.
 
 ## [0.1.0] - 2025-03-23
 

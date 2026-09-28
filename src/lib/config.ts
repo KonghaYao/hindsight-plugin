@@ -36,7 +36,6 @@ export interface PluginConfig {
   retainTags: string[];
   retainMetadata: Record<string, unknown>;
   // Connection
-  upgradeNotice: boolean;
   hindsightApiUrl: string | null;
   hindsightApiToken: string | null;
   apiPort: number;
@@ -115,7 +114,6 @@ export const DEFAULTS: PluginConfig = {
   retainTags: ['{session_id}'],
   retainMetadata: {},
   // Connection
-  upgradeNotice: true, // show the superseded-by-coding-agents notice (capped, see lib/upgrade-notice.ts)
   hindsightApiUrl: null,
   hindsightApiToken: null,
   apiPort: 9077,

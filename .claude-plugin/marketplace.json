@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hindsight-plugin",
+  "description": "Long-term memory for Claude Code, backed by Hindsight",
+  "owner": {
+    "name": "KonghaYao"
+  },
+  "plugins": [
+    {
+      "name": "hindsight-memory",
+      "description": "Automatic long-term memory for Claude Code via Hindsight",
+      "source": "./plugin"
+    }
+  ]
+}

@@ -45,3 +45,30 @@ jobs:
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Prove the spec the plugin pins actually resolves, and does so from outside
+      # the checkout: `npm exec` matches a `<name>@<version>` spec against a local
+      # `package.json` first, and this repository's own is exactly that spec — run
+      # inside it, this would pass against the working tree even if the publish
+      # failed. Registry propagation is not instant, hence the retries.
+      #
+      # This is the check `bun run verify` cannot make: every other test runs a
+      # local tarball, so a publish that reports success while the version is not
+      # resolvable leaves every installed plugin failing E404 on every hook, with
+      # nothing red anywhere.
+      - name: Smoke-test the published spec
+        working-directory: ${{ runner.temp }}
+        run: |
+          name=$(node -p "require('$GITHUB_WORKSPACE/package.json').name")
+          version=$(node -p "require('$GITHUB_WORKSPACE/package.json').version")
+          spec="$name@$version"
+          for attempt in 1 2 3 4 5; do
+            if npx --yes -p "$spec" hindsight --version; then
+              echo "::notice::$spec resolves and runs"
+              exit 0
+            fi
+            echo "::warning::$spec does not resolve yet (attempt $attempt)"
+            sleep 20
+          done
+          echo "::error::$spec never resolved — an installed plugin would fail with E404 on every hook"
+          exit 1

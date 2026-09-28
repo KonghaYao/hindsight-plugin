@@ -17,9 +17,12 @@ its cache afterwards.
 
 ```bash
 # 1. Add the marketplace and install the plugin
-#    The plugin lives in plugin/, so the marketplace entry must resolve to that
-#    subdirectory rather than to the repository root.
-claude plugin marketplace add vectorize-io/hindsight
+#    The repository is the marketplace; `.claude-plugin/marketplace.json` points
+#    the plugin entry at plugin/, so what installs is the JSON directory, not the
+#    package source. If you also have the upstream `hindsight` marketplace added,
+#    spell the install as `hindsight-memory@hindsight-plugin` — both offer a
+#    plugin by that name.
+claude plugin marketplace add KonghaYao/hindsight-plugin
 claude plugin install hindsight-memory
 
 # 2. Configure your LLM provider for memory extraction
@@ -47,6 +50,11 @@ That's it! The plugin will automatically start capturing and recalling memories.
 > `npx` needs. Nothing else: the CLI has no runtime dependencies, and the plugin
 > has no build step.
 
+> **First run:** the plugin ships no code of its own, so the first hook to fire
+> downloads the CLI (~175 kB) into npm's cache. It happens once; every run after
+> that is local. The session-start hook is given 30 seconds for exactly this,
+> rather than the 5 its health check needs.
+
 ### Using the CLI on its own
 
 The plugin is one consumer of the CLI; you can drive it directly, without Claude
@@ -55,7 +63,6 @@ Code:
 ```bash
 npx -y -p @peri-code/hindsight hindsight hook recall   # run a hook once
 npx -y -p @peri-code/hindsight hindsight mcp           # start the MCP server
-npx -y -p @peri-code/hindsight hindsight setup         # register hooks in ~/.claude/settings.json
 npx -y -p @peri-code/hindsight hindsight --help        # everything else
 ```
 
@@ -215,10 +222,14 @@ All settings live in `~/.hindsight/claude-code.json`. Every setting can also be 
 3. User config (`~/.hindsight/claude-code.json` — recommended for your overrides)
 4. Environment variables
 
-Layer 2 is usually absent in practice: an installed plugin runs the CLI out of
-npm's cache over `npx`, and that copy has no `settings.json` beside it. The
-built-in defaults and that file hold the same values — a test asserts it — so the
-only layer that ever changes anything is your own config.
+Whether layer 2 applies depends on how the CLI was launched. Started from a
+source checkout, from the plugin directory, or with `CLAUDE_PLUGIN_ROOT` pointing
+at it — Claude Code sets that variable for the MCP server it launches, and whether
+it does so for the hooks it spawns is not something this package can observe —
+`settings.json` is found beside the plugin; resolved by `npx` out of its cache, it
+is not. The built-in defaults and that file hold identical values, asserted by a
+test rather than assumed, so whichever of the two applies, the only layer that
+changes anything is your own config.
 
 ---
 
@@ -380,9 +391,10 @@ the `PATH` of whatever process Claude Code was started from. GUI launches
 (especially on macOS) often inherit a `PATH` that omits a version manager's
 shims. Run `npx --version` in the same environment to confirm.
 
-If the first run has no network access, `npx` cannot download the pinned release
-and the hook exits non-zero once; it works from then on, because the package
-stays in the npx cache.
+If the machine has no network access the first time a hook runs, `npx` cannot
+download the pinned release and that hook fails: nothing is recalled or retained
+until one download succeeds, after which the package is in the npx cache and the
+plugin works offline.
 
 ### Recall returning no memories
 
@@ -399,8 +411,7 @@ stays in the npx cache.
 
 ### High latency on recall
 
-- The recall hook has a 45-second timeout, shared by the `UserPromptSubmit` hook
-  and `hindsight setup`. If Hindsight is slow:
+- The recall hook has a 45-second timeout. If Hindsight is slow:
   - Use `recallBudget: "low"` (fewer retrieval strategies)
   - Reduce `recallMaxTokens`
   - Consider using an external API with a faster server
@@ -441,10 +452,19 @@ bun run build
 node dist/cli.js hook recall < hook-input.json
 node dist/cli.js --help
 
-# Or exercise the npx path the plugin actually uses:
+# Or exercise the npx path the plugin actually uses. Pack in the repository, run
+# anywhere else: `npm exec` matches a `<name>@<version>` spec against the local
+# tree first, and this repository's package.json carries exactly the name and
+# version the plugin pins — so from the repo root that command resolves to the
+# working tree and links no `bin` at all, failing with `command not found` rather
+# than proving anything.
 npm pack --pack-destination /tmp
-npx -y -p /tmp/peri-code-hindsight-*.tgz hindsight mcp
+cd "$(mktemp -d)"
+npx -y -p /tmp/peri-code-hindsight-*.tgz hindsight --version
 ```
+
+`tests/npx.test.ts` does the same thing on every test run, against a tarball it
+packs itself, which is why the recipe above is only for poking at a change by hand.
 
 The test suite lives in `tests/` and runs on Vitest. It was ported 1:1 from the
 plugin's original pytest suite (see the git history for the pre-migration
@@ -496,7 +516,7 @@ uvx hindsight-embed@latest profile list
 
 - [Hindsight Documentation](https://vectorize.io/hindsight)
 - [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code)
-- [GitHub Repository](https://github.com/vectorize-io/hindsight)
+- [GitHub Repository](https://github.com/KonghaYao/hindsight-plugin)
 
 ## License
 

@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "npx -y -p @peri-code/hindsight@0.8.0 hindsight hook session-start",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }

@@ -42,6 +42,5 @@
   "llmModel": null,
   "llmApiKeyEnv": null,
   "enableKnowledgeTools": true,
-  "debug": false,
-  "upgradeNotice": true
+  "debug": false
 }

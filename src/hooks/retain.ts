@@ -392,8 +392,11 @@ export async function run(): Promise<void> {
     await main();
   } catch (error) {
     console.error(`[Hindsight] Unexpected error in retain: ${errorText(error)}`);
+    // Debug mode keeps the failure visible by exiting 1 — a non-blocking error,
+    // whose stderr Claude Code shows. Never 2: that is the blocking code, and
+    // this hook runs on the critical path of every response.
     try {
-      process.exit(loadConfig().debug ? 2 : 0);
+      process.exit(loadConfig().debug ? 1 : 0);
     } catch {
       process.exit(0);
     }

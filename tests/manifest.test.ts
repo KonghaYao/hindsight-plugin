@@ -8,7 +8,7 @@
  * built-in one all fail silently at runtime — the first two only on a user's
  * machine, the third only as memories that never come back.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -37,6 +37,7 @@ const pkg = readJson('package.json');
 const pluginManifest = readJson('plugin/.claude-plugin/plugin.json');
 const hooksJson = readJson('plugin/hooks/hooks.json');
 const mcpJson = readJson('plugin/.mcp.json');
+const marketplaceJson = readJson('.claude-plugin/marketplace.json');
 
 const hooks = hooksJson.hooks as Record<string, unknown>;
 
@@ -148,5 +149,26 @@ describe('plugin/settings.json', () => {
 describe('plugin/.claude-plugin/plugin.json', () => {
   it('declares the plugin name the marketplace installs', () => {
     expect(pluginManifest.name).toBe('hindsight-memory');
+  });
+});
+
+describe('.claude-plugin/marketplace.json', () => {
+  const entries = marketplaceJson.plugins as Array<{ name?: unknown; source?: unknown }>;
+
+  /** The entry `claude plugin install hindsight-memory` resolves through. */
+  const entry = entries.find((candidate) => candidate.name === pluginManifest.name);
+
+  it('offers the plugin under the name plugin.json declares', () => {
+    // `claude plugin install <name>` resolves against this list, so an entry
+    // named anything else installs a plugin the README does not describe.
+    expect(entry, `no marketplace entry named ${String(pluginManifest.name)}`).toBeDefined();
+  });
+
+  it('points that entry at the directory the plugin actually ships from', () => {
+    // The repository root is the marketplace and the plugin is one directory
+    // down, so this path is the whole link between the two: `./` would hand
+    // Claude Code a directory with no plugin manifest in it.
+    expect(entry?.source).toBe('./plugin');
+    expect(existsSync(join(PACKAGE_ROOT, 'plugin', '.claude-plugin', 'plugin.json'))).toBe(true);
   });
 });
