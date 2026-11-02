@@ -1,7 +1,7 @@
 name: Publish
 
-# Tag-driven and manual: pushing `v0.9.0` publishes exactly the commit the tag
-# points at, which is what the plugin's `npx -y -p npm:@peri-code/hindsight@0.9.0`
+# Tag-driven and manual: pushing `v0.10.0` publishes exactly the commit the tag
+# points at, which is what the plugin's `npx -y -p npm:@peri-code/hindsight@0.10.0`
 # pins resolve to. Nothing here bumps a version — that is a commit, and the
 # manifest tests are what keep it consistent across all four places.
 on:
