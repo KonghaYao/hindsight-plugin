@@ -194,9 +194,12 @@ than a Claude Code JSONL transcript, so `transcript_path` arrives empty. When
 from `~/.peri/threads/threads.db`; set `PERI_DB_PATH` to use a different database
 (an empty value counts as unset). The store is opened read-only with a bounded
 busy timeout and skipped with a diagnostic if it is missing, locked, corrupt or
-unreadable. Remote Peri session stores are not supported. This path needs
-Node.js ≥ 22.13 (built-in `node:sqlite`) or Bun (built-in `bun:sqlite`); it adds
-no npm dependency.
+unreadable. Rows are filtered by the active role set in SQL, skipping
+`excluded=1` and `system_reminder`, and a single hook reads at most the newest
+2000 messages (500 for multi-turn recall); the retention checkpoint still
+advances across the whole thread. Remote Peri session stores are not supported.
+This path needs Node.js ≥ 22.13 (built-in `node:sqlite`) or Bun (built-in
+`bun:sqlite`); it adds no npm dependency.
 
 ## Connection Modes
 

@@ -19,10 +19,18 @@ import { join } from 'node:path';
 import type { PluginConfig } from './config';
 import { debugLog } from './config';
 
-/** Rows for one thread, in insertion order, excluding rows Peri has hidden. */
-const MESSAGES_SQL =
-  'SELECT message_id, role, content FROM messages ' +
-  'WHERE thread_id = ?1 AND excluded = 0 ORDER BY rowid';
+/**
+ * Most recent messages a single retain hook reads from a large thread.
+ *
+ * Peri threads can hold tens of thousands of rows; parsing the whole thread on
+ * every Stop hook would exceed the hook's time budget. The checkpoint still
+ * advances to the SQL-side total, so older rows are skipped deliberately rather
+ * than re-read forever.
+ */
+export const PERI_RETAIN_MESSAGE_LIMIT = 2000;
+
+/** Most recent messages a multi-turn recall reads for query context. */
+export const PERI_RECALL_MESSAGE_LIMIT = 500;
 
 /** Upper bound on how long a read may wait for Peri's writer. */
 const BUSY_TIMEOUT_MS = 2000;
@@ -37,11 +45,14 @@ export interface PeriMessageBatch {
    * from "the thread was rewritten".
    */
   readonly lastMessageId: string;
+  /** Valid rows for the selected roles, not just the bounded window length. */
+  readonly totalCount: number;
 }
 
 /** Minimal shape shared by `node:sqlite`'s StatementSync and `bun:sqlite`'s Statement. */
 interface PeriStatement {
   all(...params: unknown[]): unknown[];
+  get?(...params: unknown[]): unknown;
 }
 
 /** Minimal shape shared by `node:sqlite`'s DatabaseSync and `bun:sqlite`'s Database. */
@@ -179,16 +190,24 @@ async function openPeriDatabase(dbPath: string): Promise<PeriDatabase> {
 }
 
 /**
- * Read all conversation messages for `sessionId`.
+ * Read the newest conversation window for `sessionId`.
+ *
+ * `roles` selects the rows worth parsing; an empty list means the conversation
+ * default (`user` + `assistant`). `system_reminder` rows are always excluded in
+ * SQL, as are rows Peri marks `excluded = 1`. Only the newest `limit` rows are
+ * fetched and parsed, while `totalCount` still reflects the full role-filtered
+ * thread so the retention checkpoint can advance past rows this run did not read.
  *
  * Returns null when the backend is unavailable (missing file, unsupported
- * runtime, unreadable/locked/corrupt database) or the thread has no retainable
+ * runtime, unreadable/locked/corrupt database) or the window has no retainable
  * messages; the callers treat null as "nothing to retain/recall" and have
  * already received the diagnostic. Never throws.
  */
 export async function readPeriMessages(
   sessionId: string,
   config: PluginConfig,
+  roles: readonly string[],
+  limit = PERI_RETAIN_MESSAGE_LIMIT,
 ): Promise<PeriMessageBatch | null> {
   let dbPath: string;
   try {
@@ -217,15 +236,39 @@ export async function readPeriMessages(
   let db: PeriDatabase | null = null;
   try {
     db = await openPeriDatabase(dbPath);
-    const statement = db.prepare?.(MESSAGES_SQL) ?? db.query?.(MESSAGES_SQL);
-    if (statement === undefined) {
-      throw new Error('SQLite driver exposes neither prepare() nor query()');
+    const activeRoles = roles.length > 0 ? [...new Set(roles)] : ['user', 'assistant'];
+    const placeholders = activeRoles.map(() => '?').join(', ');
+    const filter =
+      'FROM messages WHERE thread_id = ? AND excluded = 0 ' +
+      `AND role <> 'system_reminder' AND role IN (${placeholders})`;
+
+    const prepare = (sql: string): PeriStatement => {
+      const statement = db?.prepare?.(sql) ?? db?.query?.(sql);
+      if (statement === undefined) {
+        throw new Error('SQLite driver exposes neither prepare() nor query()');
+      }
+      return statement;
+    };
+
+    const countStatement = prepare(`SELECT COUNT(*) AS count ${filter}`);
+    const countRow = countStatement.get
+      ? countStatement.get(sessionId, ...activeRoles)
+      : countStatement.all(sessionId, ...activeRoles)[0];
+    const totalCount = Number(isRecord(countRow) ? countRow.count : Number.NaN);
+    if (!Number.isFinite(totalCount)) {
+      throw new Error('Peri session store returned an invalid message count');
     }
+
+    const windowLimit = Math.max(1, Math.trunc(limit));
+    const windowRows = prepare(
+      `SELECT message_id, role, content ${filter} ORDER BY rowid DESC LIMIT ?`,
+    ).all(sessionId, ...activeRoles, windowLimit);
 
     const messages: Record<string, unknown>[] = [];
     let lastMessageId: string | null = null;
     let skipped = 0;
-    for (const row of statement.all(sessionId)) {
+    // SQL returns newest first; the content helpers expect conversation order.
+    for (const row of [...windowRows].reverse()) {
       const parsed = parsePeriRow(row);
       if (parsed === 'skip') {
         continue;
@@ -243,14 +286,17 @@ export async function readPeriMessages(
       lastMessageId = messageId;
     }
 
+    debugLog(
+      config,
+      `Peri session store: read ${messages.length}/${totalCount} messages from thread ${sessionId}`,
+    );
     if (skipped > 0) {
       debugLog(config, `Peri session store: skipped ${skipped} unusable message row(s)`);
     }
     if (messages.length === 0 || lastMessageId === null) {
-      debugLog(config, `Peri session store has no retainable messages for thread ${sessionId}`);
       return null;
     }
-    return { messages, lastMessageId };
+    return { messages, lastMessageId, totalCount };
   } catch (error) {
     console.error(`[Hindsight] Peri session store unavailable: ${errorText(error)}; skipping`);
     return null;

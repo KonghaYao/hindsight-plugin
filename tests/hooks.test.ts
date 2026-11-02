@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main as recallMain } from '../src/hooks/recall';
 import { main as retainMain } from '../src/hooks/retain';
 import { main as sessionEndMain } from '../src/hooks/session-end';
+import { readState } from '../src/lib/state';
 import {
   createEnvSandbox,
   type EnvSandbox,
@@ -931,6 +932,57 @@ describe('PeriSession', () => {
     expect(item?.content).toContain('rewritten Peri question');
     expect(item?.content).toContain('surviving old question');
     expect(item?.content.trim().length).toBeGreaterThan(0);
+  });
+
+  it('retains only the newest bounded window of a large Peri thread', async () => {
+    const sessionId = 'sess-peri-large';
+    const bulkRows = Array.from({ length: 2500 }, (_, index) => ({
+      messageId: `bulk-${index}`,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `bulk message ${index}`,
+    }));
+    let dbPath = writePeriDatabase(sandbox.root, sessionId, bulkRows);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies).toHaveLength(1);
+    const first = captured.bodies[0]?.items[0];
+    expect(first?.content).toContain('bulk message 2499');
+    expect(first?.content).not.toContain('bulk message 0');
+    const firstState = readState<Record<string, { message_count: number }>>(
+      'retention_tracking.json',
+      {},
+    );
+    expect(firstState[sessionId]?.message_count).toBe(2500);
+
+    // Two new messages push the total to 2502; only that suffix is retained.
+    dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      ...bulkRows,
+      { messageId: 'new-1', role: 'user', content: 'newest large question' },
+      { messageId: 'new-2', role: 'assistant', content: 'newest large answer' },
+    ]);
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies).toHaveLength(2);
+    const second = captured.bodies[1]?.items[0];
+    expect(second?.document_id).toBe(`${sessionId}-c1`);
+    expect(second?.content).toContain('newest large question');
+    expect(second?.content).not.toContain('bulk message 2499');
+    expect(second?.content.trim().length).toBeGreaterThan(0);
+    const secondState = readState<Record<string, { message_count: number }>>(
+      'retention_tracking.json',
+      {},
+    );
+    expect(secondState[sessionId]?.message_count).toBe(2502);
   });
 
   it('SessionEnd retains without a transcript_path', async () => {

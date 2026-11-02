@@ -7,7 +7,10 @@
  * Flow:
  *   1. Read hook input from stdin (session_id, transcript_path, cwd)
  *   2. Read conversation messages from transcript_path, or from Peri's local
- *      SQLite session store when transcript_path is empty (Peri has no JSONL)
+ *      SQLite session store when transcript_path is empty (Peri has no JSONL).
+ *      A Peri read is bounded to the newest PERI_RETAIN_MESSAGE_LIMIT rows; the
+ *      checkpoint still advances to the SQL-side total, so older rows are not
+ *      re-read on every Stop.
  *   3. Apply chunked retention logic (retainEveryNTurns + overlap window)
  *   4. Resolve API URL (external, existing local, or auto-start daemon)
  *   5. Derive bank ID and ensure mission
@@ -189,22 +192,38 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
   // Read the conversation from whichever backend the host provides. Peri has no
   // JSONL transcript, so a missing transcript_path with a session id means the
   // messages live in its local SQLite store. A null result is a diagnosed
-  // backend failure: never claim a retain that did not happen.
+  // backend failure or an empty thread: never claim a retain that did not happen.
   const periSession = isPeriSession(hookInput);
+  // Actual retained roles: an empty configured list means the conversation
+  // default, and Peri's separate `tool` rows are only wanted when asked for.
+  const baseRetainRoles =
+    config.retainRoles.length > 0 ? config.retainRoles : ['user', 'assistant'];
+  const includeToolCalls = config.retainToolCalls;
+  let retainRoles: readonly string[] = baseRetainRoles;
+  if (periSession && includeToolCalls) {
+    retainRoles = baseRetainRoles.includes('tool') ? baseRetainRoles : [...baseRetainRoles, 'tool'];
+  }
+
   let allMessages: Record<string, unknown>[];
+  let totalMessageCount: number;
   let source: string;
   let lastMessageId: string | null | undefined;
   if (periSession) {
-    const periResult = await readPeriMessages(sessionId, config);
+    const periResult = await readPeriMessages(sessionId, config, retainRoles);
     if (periResult === null) {
-      debugLog(config, `Peri session store unavailable for session ${sessionId}; skipping retain`);
+      debugLog(
+        config,
+        `Peri session store unavailable or empty for session ${sessionId}; skipping retain`,
+      );
       return;
     }
     allMessages = periResult.messages;
+    totalMessageCount = periResult.totalCount;
     lastMessageId = periResult.lastMessageId;
     source = 'Peri session store';
   } else {
     allMessages = readTranscript(transcriptPath);
+    totalMessageCount = allMessages.length;
     source = 'transcript';
   }
 
@@ -256,13 +275,17 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
       `Chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`,
     );
   } else {
-    retentionProgress = planRetention(sessionId, allMessages.length, lastMessageId);
-    if (retentionProgress.startIndex >= allMessages.length) {
+    retentionProgress = planRetention(sessionId, totalMessageCount, lastMessageId);
+    if (retentionProgress.startIndex >= totalMessageCount) {
       debugLog(config, `No new messages for session ${sessionId}, skipping retain`);
       return;
     }
-    messagesToRetain = allMessages.slice(retentionProgress.startIndex);
-    retainFullWindow = retentionProgress.startIndex === 0;
+    // Peri only loaded the newest window, so translate the absolute checkpoint
+    // offset into an index inside that window.
+    const windowStart = totalMessageCount - allMessages.length;
+    const sliceStart = Math.max(0, retentionProgress.startIndex - windowStart);
+    messagesToRetain = allMessages.slice(sliceStart);
+    retainFullWindow = sliceStart === 0;
     if (retentionProgress.compacted) {
       debugLog(
         config,
@@ -277,20 +300,15 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
     debugLog(
       config,
       `Full session retain: ${messagesToRetain.length} new messages ` +
-        `from ${allMessages.length} total into chunk ${retentionProgress.chunkIndex}`,
+        `from ${totalMessageCount} total (window ${allMessages.length}) ` +
+        `into chunk ${retentionProgress.chunkIndex}`,
     );
   }
 
   // Format transcript. Peri stores tool results as their own `tool` rows, so
-  // include them when the user asked for tool calls; Claude Code's JSONL path
-  // keeps its existing role set because there tool calls live inside assistant
-  // content blocks.
-  let retainRoles = config.retainRoles;
-  const includeToolCalls = config.retainToolCalls;
-  if (periSession && includeToolCalls) {
-    const baseRoles = retainRoles.length > 0 ? retainRoles : ['user', 'assistant'];
-    retainRoles = baseRoles.includes('tool') ? baseRoles : [...baseRoles, 'tool'];
-  }
+  // they were already added to `retainRoles` before reading; Claude Code's JSONL
+  // path keeps its existing role set because there tool calls live inside
+  // assistant content blocks.
   const [transcript, messageCount] = prepareRetentionTranscript(
     messagesToRetain,
     retainRoles,
@@ -300,7 +318,7 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
 
   if (!transcript) {
     if (retentionProgress !== null) {
-      commitRetention(sessionId, allMessages.length, retentionProgress.chunkIndex, lastMessageId);
+      commitRetention(sessionId, totalMessageCount, retentionProgress.chunkIndex, lastMessageId);
     }
     debugLog(config, 'Empty transcript after formatting, skipping retain');
     return;
@@ -398,7 +416,7 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
       15,
     );
     if (retentionProgress !== null) {
-      commitRetention(sessionId, allMessages.length, retentionProgress.chunkIndex, lastMessageId);
+      commitRetention(sessionId, totalMessageCount, retentionProgress.chunkIndex, lastMessageId);
     }
     debugLog(config, `Retain response: ${JSON.stringify(response).slice(0, 200)}`);
   } catch (error) {

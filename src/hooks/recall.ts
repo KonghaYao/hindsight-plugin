@@ -33,7 +33,7 @@ import {
   truncateRecallQuery,
 } from '../lib/content';
 import { getApiUrl } from '../lib/daemon';
-import { isPeriSession, readPeriMessages } from '../lib/peri';
+import { isPeriSession, PERI_RECALL_MESSAGE_LIMIT, readPeriMessages } from '../lib/peri';
 import { writeState } from '../lib/state';
 
 const LAST_RECALL_STATE = 'last_recall.json';
@@ -334,7 +334,13 @@ export async function main(): Promise<void> {
     let source: string;
     if (isPeriSession(hookInput)) {
       const sessionId = typeof hookInput.session_id === 'string' ? hookInput.session_id : '';
-      const periResult = await readPeriMessages(sessionId, config);
+      const contextRoles = recallRoles.length > 0 ? recallRoles : ['user', 'assistant'];
+      const periResult = await readPeriMessages(
+        sessionId,
+        config,
+        contextRoles,
+        PERI_RECALL_MESSAGE_LIMIT,
+      );
       messages = periResult?.messages ?? [];
       source = 'Peri session store';
     } else {

@@ -191,38 +191,50 @@ export function writePeriDatabase(dir: string, sessionId: string, rows: PeriTest
         projection TEXT
       );
     `);
-    db.prepare('INSERT INTO threads (id, message_count) VALUES (?, ?)').run(sessionId, rows.length);
 
-    const insert = db.prepare(`
-      INSERT INTO messages (message_id, thread_id, role, content, truncated, excluded)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    rows.forEach((row, index) => {
-      const messageId = row.messageId ?? `${sessionId}-msg-${index + 1}`;
-      const body = { role: row.role, id: messageId, content: row.content };
-      let payload: unknown;
-      if (row.type === 'system_reminder') {
-        // Peri's real reminder rows carry no `message` key at all.
-        payload = {
-          version: 1,
-          type: 'system_reminder',
-          id: messageId,
-          reminder: { content: row.content },
-        };
-      } else if (row.legacy) {
-        payload = body;
-      } else {
-        payload = { version: 1, type: row.type ?? 'message', message: body };
-      }
-      insert.run(
-        messageId,
+    // One transaction keeps large fixtures (thousands of rows) fast.
+    db.exec('BEGIN');
+    try {
+      db.prepare('INSERT INTO threads (id, message_count) VALUES (?, ?)').run(
         sessionId,
-        row.role,
-        JSON.stringify(payload),
-        row.truncated ? 1 : 0,
-        row.excluded ? 1 : 0,
+        rows.length,
       );
-    });
+
+      const insert = db.prepare(`
+        INSERT INTO messages (message_id, thread_id, role, content, truncated, excluded)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      rows.forEach((row, index) => {
+        const messageId = row.messageId ?? `${sessionId}-msg-${index + 1}`;
+        const body = { role: row.role, id: messageId, content: row.content };
+        let payload: unknown;
+        if (row.type === 'system_reminder') {
+          // Peri's real reminder rows carry no `message` key at all.
+          payload = {
+            version: 1,
+            type: 'system_reminder',
+            id: messageId,
+            reminder: { content: row.content },
+          };
+        } else if (row.legacy) {
+          payload = body;
+        } else {
+          payload = { version: 1, type: row.type ?? 'message', message: body };
+        }
+        insert.run(
+          messageId,
+          sessionId,
+          row.role,
+          JSON.stringify(payload),
+          row.truncated ? 1 : 0,
+          row.excluded ? 1 : 0,
+        );
+      });
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
   } finally {
     db.close();
   }
