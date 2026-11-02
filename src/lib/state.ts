@@ -228,6 +228,13 @@ function lockedReadModifyWrite<T>(
 interface RetentionEntry {
   message_count: number;
   chunk: number;
+  /**
+   * Peri only: id of the last message in the active thread. Peri physically
+   * deletes messages on rewind, so deleting N rows and appending N new ones
+   * leaves `message_count` unchanged; this fingerprint is the only way to see
+   * that the thread was rewritten rather than left untouched.
+   */
+  last_message_id?: string | null;
 }
 
 /**
@@ -236,8 +243,19 @@ interface RetentionEntry {
  * The caller must only commit the returned progress after the retain request
  * succeeds; otherwise a transient API failure would skip unsent messages on the
  * next hook run.
+ *
+ * `lastMessageId` is supplied only for Peri sessions. Peri can physically
+ * delete messages (rewind) and append replacements between two Stop hooks, so a
+ * delete of N rows plus N appends leaves the message count identical. Without
+ * the id fingerprint that case is indistinguishable from "nothing new" and the
+ * replacements would never be retained. Claude Code callers pass nothing and
+ * keep the original count-only behaviour.
  */
-export function planRetention(sessionId: string, messageCount: number): RetentionProgress {
+export function planRetention(
+  sessionId: string,
+  messageCount: number,
+  lastMessageId?: string | null,
+): RetentionProgress {
   const data = readState<Record<string, RetentionEntry>>('retention_tracking.json', {});
   const entry = data[sessionId] ?? { message_count: 0, chunk: 0 };
   const lastCount = entry.message_count;
@@ -258,16 +276,36 @@ export function planRetention(sessionId: string, messageCount: number): Retentio
     // whole session under a replacement document_id.
     chunk += 1;
   } else if (messageCount === lastCount) {
-    startIndex = messageCount;
+    if (lastMessageId !== undefined && entry.last_message_id !== lastMessageId) {
+      // Same size, different tail: Peri deleted old messages and appended new
+      // ones. Re-retain the whole active thread into a fresh chunk; duplicating
+      // a few messages is preferable to silently dropping the rewrite.
+      chunk += 1;
+      compacted = true;
+      startIndex = 0;
+    } else {
+      startIndex = messageCount;
+    }
   }
 
   return { chunkIndex: chunk, compacted, startIndex };
 }
 
 /** Persist the checkpoint for a successful retain. */
-export function commitRetention(sessionId: string, messageCount: number, chunkIndex: number): void {
+export function commitRetention(
+  sessionId: string,
+  messageCount: number,
+  chunkIndex: number,
+  lastMessageId?: string | null,
+): void {
   lockedReadModifyWrite('retention_tracking.json', 'retention_tracking.lock', (data) => {
-    data[sessionId] = { message_count: messageCount, chunk: chunkIndex };
+    const entry: RetentionEntry = { message_count: messageCount, chunk: chunkIndex };
+    // Only Peri writes the fingerprint; the Claude Code checkpoint stays
+    // byte-for-byte the same as before this field existed.
+    if (lastMessageId !== undefined) {
+      entry.last_message_id = lastMessageId;
+    }
+    data[sessionId] = entry;
     capTrackedKeys(data);
     return [data, undefined];
   });

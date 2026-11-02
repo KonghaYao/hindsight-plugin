@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Peri session backend.** Peri runs the same hooks but stores conversations in
+  `~/.peri/threads/threads.db` instead of a Claude Code JSONL transcript, so
+  `transcript_path` arrives empty. Retain, SessionEnd and multi-turn recall now
+  read the active thread from that local store (override with `PERI_DB_PATH`),
+  read-only, using Node's built-in `node:sqlite` (Node ≥ 22.13) or Bun's
+  `bun:sqlite`. Rows are role-filtered in SQL (`excluded=1` and
+  `system_reminder` skipped) and each hook reads at most the newest 2000 messages
+  for retain (500 for multi-turn recall), while the checkpoint still advances by
+  the full thread count. Missing, locked or corrupt stores are logged and
+  skipped. Remote Peri session stores are out of scope.
+
 ## [0.9.0]
 
 ### Added
