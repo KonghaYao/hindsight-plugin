@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.0]
 
 ### Added
 
@@ -14,6 +14,12 @@
   for retain (500 for multi-turn recall), while the checkpoint still advances by
   the full thread count. Missing, locked or corrupt stores are logged and
   skipped. Remote Peri session stores are out of scope.
+
+### Compatibility
+
+- The Peri backend requires Node.js ≥ 22.13 (built-in `node:sqlite`) or Bun. On
+  older Node.js the Claude Code path is unchanged and the Peri source is skipped
+  with a diagnostic.
 
 ## [0.9.0]
 

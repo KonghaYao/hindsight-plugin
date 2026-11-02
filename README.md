@@ -1,13 +1,13 @@
-# Hindsight Memory Plugin for Claude Code
+# Hindsight Memory Plugin for Claude Code and Peri
 
-Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
+Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Peri](https://github.com/konghayao/peri) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
 
 Two artifacts ship from this repository:
 
 | Artifact | Where | What it is |
 |----------|-------|------------|
 | [`@peri-code/hindsight`](https://www.npmjs.com/package/@peri-code/hindsight) | npm | The CLI that does the work: the four hooks and the MCP server |
-| `hindsight-memory` | [`plugin/`](plugin) | The Claude Code plugin — a directory of JSON that calls that CLI through `npx` |
+| `hindsight-memory` | [`plugin/`](plugin) | The host plugin (Claude Code / Peri) — a directory of JSON that calls that CLI through `npx` |
 
 The plugin ships no code of its own, so there is nothing to build after
 installing it: `npx` fetches the pinned CLI release on first use and runs it from
@@ -523,7 +523,7 @@ not propagated fails CI rather than publishing a plugin that installs nothing.
 
 ```bash
 # after bumping both manifests and the two npx pins
-git tag v0.9.0 && git push origin v0.9.0
+git tag v0.10.0 && git push origin v0.10.0
 ```
 
 `.github/workflows/publish.yml` then verifies, packages and publishes to npm.
