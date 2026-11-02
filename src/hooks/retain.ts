@@ -289,8 +289,8 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
     if (retentionProgress.compacted) {
       debugLog(
         config,
-        `Compaction detected for session ${sessionId}: transcript shrank, ` +
-          `retaining compacted transcript as chunk ${retentionProgress.chunkIndex}`,
+        `Compaction or rewrite detected for session ${sessionId}: ` +
+          `retaining the active set as chunk ${retentionProgress.chunkIndex}`,
       );
     }
     documentId =
