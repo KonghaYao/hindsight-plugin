@@ -11,6 +11,7 @@
  */
 import { debugLog, loadConfig } from '../lib/config';
 import { stopDaemon } from '../lib/daemon';
+import { isPeriSession } from '../lib/peri';
 
 /** Message text of an error, matching Python's `str(e)` rather than JS's `String(error)`. */
 function errorText(error: unknown): string {
@@ -68,8 +69,11 @@ export async function main(): Promise<void> {
   debugLog(config, `SessionEnd hook, reason: ${hookField(hookInput, 'reason', 'unknown')}`);
 
   // Force a final retain before stopping the daemon — guarantees short sessions
-  // (fewer turns than retainEveryNTurns) still land on disk.
-  if (config.autoRetain && hookInput.transcript_path) {
+  // (fewer turns than retainEveryNTurns) still land on disk. Peri sessions have
+  // no transcript_path, so the session id alone must be enough to trigger it.
+  const transcriptPath =
+    typeof hookInput.transcript_path === 'string' ? hookInput.transcript_path : '';
+  if (config.autoRetain && (transcriptPath !== '' || isPeriSession(hookInput))) {
     try {
       // Imported here rather than at the top, mirroring the original's in-function
       // `from retain import run_retain` — a failure to load it is caught below.

@@ -33,6 +33,7 @@ import {
   truncateRecallQuery,
 } from '../lib/content';
 import { getApiUrl } from '../lib/daemon';
+import { isPeriSession, readPeriMessages } from '../lib/peri';
 import { writeState } from '../lib/state';
 
 const LAST_RECALL_STATE = 'last_recall.json';
@@ -329,10 +330,20 @@ export async function main(): Promise<void> {
   if (recallContextTurns > 1) {
     const transcriptPath =
       typeof hookInput.transcript_path === 'string' ? hookInput.transcript_path : '';
-    const messages = readTranscriptMessages(transcriptPath);
+    let messages: Record<string, unknown>[];
+    let source: string;
+    if (isPeriSession(hookInput)) {
+      const sessionId = typeof hookInput.session_id === 'string' ? hookInput.session_id : '';
+      const periResult = await readPeriMessages(sessionId, config);
+      messages = periResult?.messages ?? [];
+      source = 'Peri session store';
+    } else {
+      messages = readTranscriptMessages(transcriptPath);
+      source = 'transcript';
+    }
     debugLog(
       config,
-      `Multi-turn context: ${recallContextTurns} turns, ${messages.length} messages from transcript`,
+      `Multi-turn context: ${recallContextTurns} turns, ${messages.length} messages from ${source}`,
     );
     query = composeRecallQuery(prompt, messages, recallContextTurns, recallRoles);
   } else {

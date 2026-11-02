@@ -12,16 +12,20 @@
  *
  * Every `it(...)` mirrors one `test_hooks.py` case, one for one.
  */
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main as recallMain } from '../src/hooks/recall';
 import { main as retainMain } from '../src/hooks/retain';
+import { main as sessionEndMain } from '../src/hooks/session-end';
 import {
   createEnvSandbox,
   type EnvSandbox,
   makeHookInput,
   makeMemory,
   makeRecallResponse,
+  writePeriDatabase,
   writeTranscriptFile,
 } from './helpers';
 
@@ -29,7 +33,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type HookName = 'recall' | 'retain';
+type HookName = 'recall' | 'retain' | 'session-end';
 
 /** Stands in for `urlopen_side_effect`: URL plus request init in, response out. */
 type FetchStub = (url: string, init: RequestInit) => Response | Promise<Response>;
@@ -46,6 +50,7 @@ interface RunHookOptions {
 const HOOK_MAINS: Record<HookName, () => Promise<void>> = {
   recall: recallMain,
   retain: retainMain,
+  'session-end': sessionEndMain,
 };
 
 interface RecallHookOutput {
@@ -819,5 +824,227 @@ describe('RetainHook', () => {
     });
 
     expect(urls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Peri sessions (local SQLite session store)
+// ---------------------------------------------------------------------------
+
+describe('PeriSession', () => {
+  it('retains user and assistant messages from the local store', async () => {
+    const sessionId = 'sess-peri-basic';
+    const dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      { role: 'user', content: 'Peri user question' },
+      { role: 'assistant', content: 'Peri assistant answer' },
+      { role: 'user', content: 'SYSTEM REMINDER SHOULD NOT APPEAR', type: 'system_reminder' },
+      { role: 'assistant', content: 'EXCLUDED ROW SHOULD NOT APPEAR', excluded: true },
+    ]);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies, 'retain API was not called').toHaveLength(1);
+    const item = captured.bodies[0]?.items[0];
+    expect(item?.content).toContain('Peri user question');
+    expect(item?.content).toContain('Peri assistant answer');
+    expect(item?.content).not.toContain('SYSTEM REMINDER');
+    expect(item?.content).not.toContain('EXCLUDED ROW');
+    expect(item?.metadata.session_id).toBe(sessionId);
+  });
+
+  it('retains only the new suffix on a second Stop', async () => {
+    const sessionId = 'sess-peri-grow';
+    const firstRows = [
+      { role: 'user', content: 'first Peri question' },
+      { role: 'assistant', content: 'first Peri answer' },
+    ];
+    let dbPath = writePeriDatabase(sandbox.root, sessionId, firstRows);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies).toHaveLength(1);
+    expect(captured.bodies[0]?.items[0]?.document_id).toBe(sessionId);
+
+    dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      ...firstRows,
+      { role: 'user', content: 'second Peri question' },
+      { role: 'assistant', content: 'second Peri answer' },
+    ]);
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies).toHaveLength(2);
+    const item = captured.bodies[1]?.items[0];
+    expect(item?.document_id).toBe(`${sessionId}-c1`);
+    expect(item?.content).toContain('second Peri question');
+    expect(item?.content).not.toContain('first Peri question');
+  });
+
+  it('re-retains a rewritten Peri thread when the count is unchanged', async () => {
+    const sessionId = 'sess-peri-rewind';
+    const firstRows = [
+      { messageId: 'old-1', role: 'user', content: 'rewound old question' },
+      { messageId: 'old-2', role: 'assistant', content: 'rewound old answer' },
+      { messageId: 'old-3', role: 'user', content: 'surviving old question' },
+      { messageId: 'old-4', role: 'assistant', content: 'surviving old answer' },
+    ];
+    let dbPath = writePeriDatabase(sandbox.root, sessionId, firstRows);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies).toHaveLength(1);
+    expect(captured.bodies[0]?.items[0]?.document_id).toBe(sessionId);
+
+    // Peri rewind deletes old-1, then a new message (new-5) is appended. The
+    // total stays 4, so only the last-message-id fingerprint can see the rewrite.
+    dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      ...firstRows.slice(1),
+      { messageId: 'new-5', role: 'user', content: 'rewritten Peri question' },
+    ]);
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies, 'rewritten thread was not retained').toHaveLength(2);
+    const item = captured.bodies[1]?.items[0];
+    expect(item?.document_id).toBe(`${sessionId}-c1`);
+    expect(item?.content).toContain('rewritten Peri question');
+    expect(item?.content).toContain('surviving old question');
+    expect(item?.content.trim().length).toBeGreaterThan(0);
+  });
+
+  it('SessionEnd retains without a transcript_path', async () => {
+    const sessionId = 'sess-peri-end';
+    const dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      { role: 'user', content: 'final Peri question' },
+      { role: 'assistant', content: 'final Peri answer' },
+    ]);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('session-end', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies, 'SessionEnd did not retain').toHaveLength(1);
+    expect(captured.bodies[0]?.items[0]?.content).toContain('final Peri question');
+  });
+
+  it('skips a missing Peri database without failing', async () => {
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: 'sess-peri-missing', transcript_path: '' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: join(sandbox.root, 'missing', 'threads.db') },
+      extraSettings: { debug: true },
+    });
+
+    expect(captured.bodies).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledWith(
+      '[Hindsight]',
+      expect.stringContaining('Peri session store not found'),
+    );
+  });
+
+  it('skips a non-SQLite Peri database without failing', async () => {
+    const dbPath = join(sandbox.root, 'not-a-database.db');
+    writeFileSync(dbPath, 'this is not a SQLite database');
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: 'sess-peri-corrupt', transcript_path: '' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('Peri session store unavailable'),
+    );
+  });
+
+  it('multi turn recall reads context from the Peri store', async () => {
+    const sessionId = 'sess-peri-recall';
+    const dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      { role: 'user', content: 'I use Python for all my scripts' },
+      { role: 'assistant', content: 'Noted!' },
+    ]);
+    const captured = captureRecallRequests();
+    const hookInput = makeHookInput({
+      session_id: sessionId,
+      transcript_path: '',
+      prompt: 'What language should I use?',
+    });
+
+    await runHook('recall', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+      extraSettings: { recallContextTurns: 2 },
+    });
+
+    expect(captured.bodies).toHaveLength(1);
+    expect(captured.bodies[0]?.query).toContain('Python');
+  });
+
+  it('reads legacy unwrapped BaseMessage rows', async () => {
+    const sessionId = 'sess-peri-legacy';
+    const dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      { role: 'user', content: 'legacy Peri question', legacy: true },
+      { role: 'assistant', content: 'legacy Peri answer', legacy: true },
+    ]);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+    });
+
+    expect(captured.bodies, 'retain API was not called').toHaveLength(1);
+    expect(captured.bodies[0]?.items[0]?.content).toContain('legacy Peri question');
+  });
+
+  it('includes Peri tool rows when retainToolCalls is enabled', async () => {
+    const sessionId = 'sess-peri-tools';
+    const dbPath = writePeriDatabase(sandbox.root, sessionId, [
+      { role: 'user', content: 'run the tool' },
+      { role: 'assistant', content: 'tool call issued' },
+      { role: 'tool', content: 'tool output from Peri' },
+    ]);
+    const captured = captureRetainRequests();
+    const hookInput = makeHookInput({ session_id: sessionId, transcript_path: '' });
+
+    await runHook('retain', hookInput, sandbox, {
+      fetchStub: captured.stub,
+      extraEnv: { PERI_DB_PATH: dbPath },
+      extraSettings: { retainToolCalls: true },
+    });
+
+    expect(captured.bodies, 'retain API was not called').toHaveLength(1);
+    expect(captured.bodies[0]?.items[0]?.content).toContain('tool output from Peri');
   });
 });

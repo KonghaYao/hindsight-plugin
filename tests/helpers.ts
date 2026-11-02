@@ -10,6 +10,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 /** Environment keys the plugin reads; all are restored by `sandbox.restore()`. */
 const PLUGIN_ENV_PREFIX = 'HINDSIGHT_';
@@ -141,6 +142,90 @@ export function makeHookInput(overrides: Record<string, unknown> = {}): Record<s
 export function writeTranscriptFile(dir: string, messages: unknown[]): string {
   const path = join(dir, 'transcript.jsonl');
   writeFileSync(path, messages.map((message) => JSON.stringify(message)).join('\n'));
+  return path;
+}
+
+/** One row for the Peri SQLite fixture. */
+export interface PeriTestRow {
+  role: string;
+  content: unknown;
+  /**
+   * Stable row id. Defaults to an index-based id; tests that rewrite a thread
+   * must set explicit ids so the surviving/rewritten tail is distinguishable.
+   */
+  messageId?: string;
+  /** Insert a legacy unwrapped `BaseMessage` row instead of the V1 envelope. */
+  legacy?: boolean;
+  /** V1 envelope type; defaults to `message`, use `system_reminder` for UI rows. */
+  type?: string;
+  excluded?: boolean;
+  truncated?: boolean;
+}
+
+/**
+ * Create a Peri-shaped SQLite database and return its path.
+ *
+ * The schema mirrors Peri's `threads` / `messages` tables, and rows are inserted
+ * in the given order because the reader relies on `rowid` ordering. The database
+ * is recreated on every call so a test can model a thread growing between two
+ * Stop hooks by writing the full row list again.
+ */
+export function writePeriDatabase(dir: string, sessionId: string, rows: PeriTestRow[]): string {
+  const path = join(dir, 'peri-threads.db');
+  rmSync(path, { force: true });
+
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        message_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE messages (
+        message_id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        truncated BOOLEAN NOT NULL DEFAULT 0,
+        excluded BOOLEAN NOT NULL DEFAULT 0,
+        projection TEXT
+      );
+    `);
+    db.prepare('INSERT INTO threads (id, message_count) VALUES (?, ?)').run(sessionId, rows.length);
+
+    const insert = db.prepare(`
+      INSERT INTO messages (message_id, thread_id, role, content, truncated, excluded)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    rows.forEach((row, index) => {
+      const messageId = row.messageId ?? `${sessionId}-msg-${index + 1}`;
+      const body = { role: row.role, id: messageId, content: row.content };
+      let payload: unknown;
+      if (row.type === 'system_reminder') {
+        // Peri's real reminder rows carry no `message` key at all.
+        payload = {
+          version: 1,
+          type: 'system_reminder',
+          id: messageId,
+          reminder: { content: row.content },
+        };
+      } else if (row.legacy) {
+        payload = body;
+      } else {
+        payload = { version: 1, type: row.type ?? 'message', message: body };
+      }
+      insert.run(
+        messageId,
+        sessionId,
+        row.role,
+        JSON.stringify(payload),
+        row.truncated ? 1 : 0,
+        row.excluded ? 1 : 0,
+      );
+    });
+  } finally {
+    db.close();
+  }
   return path;
 }
 

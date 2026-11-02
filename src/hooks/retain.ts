@@ -6,7 +6,8 @@
  *
  * Flow:
  *   1. Read hook input from stdin (session_id, transcript_path, cwd)
- *   2. Read conversation transcript from transcript_path
+ *   2. Read conversation messages from transcript_path, or from Peri's local
+ *      SQLite session store when transcript_path is empty (Peri has no JSONL)
  *   3. Apply chunked retention logic (retainEveryNTurns + overlap window)
  *   4. Resolve API URL (external, existing local, or auto-start daemon)
  *   5. Derive bank ID and ensure mission
@@ -25,6 +26,7 @@ import { HindsightClient } from '../lib/client';
 import { debugLog, loadConfig } from '../lib/config';
 import { prepareRetentionTranscript, sliceLastTurnsByUserBoundary } from '../lib/content';
 import { getApiUrl } from '../lib/daemon';
+import { isPeriSession, readPeriMessages } from '../lib/peri';
 import type { RetentionProgress } from '../lib/state';
 import { commitRetention, incrementTurnCount, planRetention } from '../lib/state';
 
@@ -184,14 +186,34 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
   const transcriptPath =
     typeof hookInput.transcript_path === 'string' ? hookInput.transcript_path : '';
 
-  // Read full transcript
-  const allMessages = readTranscript(transcriptPath);
+  // Read the conversation from whichever backend the host provides. Peri has no
+  // JSONL transcript, so a missing transcript_path with a session id means the
+  // messages live in its local SQLite store. A null result is a diagnosed
+  // backend failure: never claim a retain that did not happen.
+  const periSession = isPeriSession(hookInput);
+  let allMessages: Record<string, unknown>[];
+  let source: string;
+  let lastMessageId: string | null | undefined;
+  if (periSession) {
+    const periResult = await readPeriMessages(sessionId, config);
+    if (periResult === null) {
+      debugLog(config, `Peri session store unavailable for session ${sessionId}; skipping retain`);
+      return;
+    }
+    allMessages = periResult.messages;
+    lastMessageId = periResult.lastMessageId;
+    source = 'Peri session store';
+  } else {
+    allMessages = readTranscript(transcriptPath);
+    source = 'transcript';
+  }
+
   if (allMessages.length === 0) {
-    debugLog(config, 'No messages in transcript, skipping retain');
+    debugLog(config, `No messages in ${source}, skipping retain`);
     return;
   }
 
-  debugLog(config, `Read ${allMessages.length} messages from transcript`);
+  debugLog(config, `Read ${allMessages.length} messages from ${source}`);
 
   // Retention mode: full session (default) or chunked (legacy)
   const retainMode = config.retainMode;
@@ -234,7 +256,7 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
       `Chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`,
     );
   } else {
-    retentionProgress = planRetention(sessionId, allMessages.length);
+    retentionProgress = planRetention(sessionId, allMessages.length, lastMessageId);
     if (retentionProgress.startIndex >= allMessages.length) {
       debugLog(config, `No new messages for session ${sessionId}, skipping retain`);
       return;
@@ -259,9 +281,16 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
     );
   }
 
-  // Format transcript
-  const retainRoles = config.retainRoles;
+  // Format transcript. Peri stores tool results as their own `tool` rows, so
+  // include them when the user asked for tool calls; Claude Code's JSONL path
+  // keeps its existing role set because there tool calls live inside assistant
+  // content blocks.
+  let retainRoles = config.retainRoles;
   const includeToolCalls = config.retainToolCalls;
+  if (periSession && includeToolCalls) {
+    const baseRoles = retainRoles.length > 0 ? retainRoles : ['user', 'assistant'];
+    retainRoles = baseRoles.includes('tool') ? baseRoles : [...baseRoles, 'tool'];
+  }
   const [transcript, messageCount] = prepareRetentionTranscript(
     messagesToRetain,
     retainRoles,
@@ -271,7 +300,7 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
 
   if (!transcript) {
     if (retentionProgress !== null) {
-      commitRetention(sessionId, allMessages.length, retentionProgress.chunkIndex);
+      commitRetention(sessionId, allMessages.length, retentionProgress.chunkIndex, lastMessageId);
     }
     debugLog(config, 'Empty transcript after formatting, skipping retain');
     return;
@@ -369,7 +398,7 @@ export async function runRetain(hookInput: Record<string, unknown>, force = fals
       15,
     );
     if (retentionProgress !== null) {
-      commitRetention(sessionId, allMessages.length, retentionProgress.chunkIndex);
+      commitRetention(sessionId, allMessages.length, retentionProgress.chunkIndex, lastMessageId);
     }
     debugLog(config, `Retain response: ${JSON.stringify(response).slice(0, 200)}`);
   } catch (error) {

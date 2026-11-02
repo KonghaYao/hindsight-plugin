@@ -160,6 +160,7 @@ Everything under `src/` is bundled by `scripts/build.ts` into a single
 | `src/lib/daemon.ts` | `hindsight-embed` daemon lifecycle (start/stop/health) |
 | `src/lib/bank.ts` | Bank ID derivation + mission management |
 | `src/lib/content.ts` | Content processing (transcript parsing, memory formatting, tag stripping) |
+| `src/lib/peri.ts` | Peri session backend: read-only local SQLite message store |
 | `src/lib/state.ts` | File-based state persistence with `O_EXCL` lock files |
 | `src/lib/llm.ts` | LLM provider auto-detection for daemon mode |
 | `src/lib/paths.ts` | Config directory resolution |
@@ -178,11 +179,24 @@ Everything under `src/` is bundled by `scripts/build.ts` into a single
 ### How Retain Works
 
 1. Claude responds → `Stop` hook fires (async, non-blocking)
-2. Reads conversation transcript from Claude Code's JSONL file
+2. Reads conversation history from Claude Code's JSONL transcript, or from Peri's
+   local SQLite store when `transcript_path` is empty
 3. Applies chunked retention logic (every N turns with sliding window)
 4. Strips `<hindsight_memories>` tags to prevent feedback loops
 5. Extracts text from channel messages (Telegram reply tool calls, etc.)
 6. POSTs formatted transcript to Hindsight retain API
+
+### Peri sessions
+
+Peri runs the same hooks but keeps conversations in a local SQLite store rather
+than a Claude Code JSONL transcript, so `transcript_path` arrives empty. When
+`session_id` is present, retain, SessionEnd and multi-turn recall read the thread
+from `~/.peri/threads/threads.db`; set `PERI_DB_PATH` to use a different database
+(an empty value counts as unset). The store is opened read-only with a bounded
+busy timeout and skipped with a diagnostic if it is missing, locked, corrupt or
+unreadable. Remote Peri session stores are not supported. This path needs
+Node.js ≥ 22.13 (built-in `node:sqlite`) or Bun (built-in `bun:sqlite`); it adds
+no npm dependency.
 
 ## Connection Modes
 
